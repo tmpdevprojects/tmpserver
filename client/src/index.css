@@ -281,7 +281,7 @@ table { width: 100%; border-collapse: collapse; min-width: 720px; } th { color: 
 /* Live diagnostics, browser-local overrides and streamed Cloud uploads. */
 .upload-progress { padding: 14px 16px; background: #0f1c29; border: 1px solid #285065; border-radius: 4px; }
 .upload-progress > div:first-child { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 10px; color: #cfe1ed; font-size: 11px; }
-.upload-progress b { font: 500 11px "IBM Plex Mono", monospace; }
+.upload-progress b { min-width: 0; overflow-wrap: anywhere; font: 500 11px "IBM Plex Mono", monospace; }
 .upload-progress span { color: #7993a9; font: 10px "IBM Plex Mono", monospace; }
 .upload-progress .meter { position: static; height: 5px; background: #26394c; }
 .upload-progress .meter span { background: var(--cyan); transition: width .2s ease; }

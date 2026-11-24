@@ -71,14 +71,15 @@ type CloudPanelProps = {
   busy: boolean;
   error: string;
   uploadProgress: number | null;
-  onUpload: (file: File, folder: string) => Promise<void>;
+  uploadStatus: string;
+  onUpload: (files: File[], folder: string) => Promise<void>;
   onCreateFolder: (path: string) => Promise<boolean>;
   onBackup: () => void;
   onDownload: (file: CloudFile) => void;
   onDelete: (file: CloudFile) => void;
 };
 
-export default function CloudPanel({ files, folders, usedBytes, busy, error, uploadProgress, onUpload, onCreateFolder, onBackup, onDownload, onDelete }: CloudPanelProps) {
+export default function CloudPanel({ files, folders, usedBytes, busy, error, uploadProgress, uploadStatus, onUpload, onCreateFolder, onBackup, onDownload, onDelete }: CloudPanelProps) {
   const [currentPath, setCurrentPath] = useState("");
   const [category, setCategory] = useState<Category>("all");
   const [query, setQuery] = useState("");
@@ -115,17 +116,17 @@ export default function CloudPanel({ files, folders, usedBytes, busy, error, upl
       <div>
         <p className="eyebrow">PRIVATE VM STORAGE</p>
         <h2>My Cloud</h2>
-        <p>One secure space for files and folders on your server. Store any file type up to 20 GB per file; uploads stream in 64 MiB chunks.</p>
+        <p>One secure space for files and folders on your server. Select multiple files at once; each file can be any type up to 20 GB and uploads run sequentially in 64 MiB chunks.</p>
         <div className="cloud-path-note"><HardDrive size={13} /><span>Stored on <code>/opt/tmpserver/cloud</code> · website ZIP publishing stays separate</span></div>
       </div>
       <div className="cloud-hero-actions">
         <button className="button secondary" onClick={onBackup} disabled={busy}><Archive size={15} /> {busy ? "Working…" : "Back up Minecraft"}</button>
         <button className="button secondary" onClick={() => setFolderFormOpen(value => !value)} disabled={busy}><FolderPlus size={15} /> New folder</button>
-        <label className="button primary upload-button"><Upload size={15} /> {busy ? "Uploading…" : "Upload file"}<input type="file" aria-label="Choose any file, up to 20 GB" onChange={event => { const file = event.target.files?.[0]; if (file) void onUpload(file, currentPath); event.currentTarget.value = ""; }} disabled={busy} /></label>
+        <label className="button primary upload-button"><Upload size={15} /> {busy ? "Uploading…" : "Upload files"}<input type="file" multiple aria-label="Choose one or more files, up to 20 GB each" onChange={event => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; if (files.length) void onUpload(files, currentPath); }} disabled={busy} /></label>
       </div>
     </div>
     {error && <p className="form-error" role="alert">{error}</p>}
-    {uploadProgress !== null && <div className="upload-progress"><div><b>Uploading to {currentPath || "My Cloud"}</b><span>{uploadProgress}% · 64 MiB chunks · keep this page open</span></div><div className="meter"><span style={{ width: `${uploadProgress}%` }} /></div></div>}
+    {uploadProgress !== null && <div className="upload-progress" aria-live="polite"><div><b>{uploadStatus || `Uploading to ${currentPath || "My Cloud"}`}</b><span>{uploadProgress}% of current file · 64 MiB chunks · keep this page open</span></div><div className="meter"><span style={{ width: `${uploadProgress}%` }} /></div></div>}
     {folderFormOpen && <form className="cloud-new-folder panel" onSubmit={submitFolder}><FolderPlus size={17} /><label className="field-label">Folder name<input autoFocus maxLength={80} value={folderDraft} onChange={event => setFolderDraft(event.target.value)} placeholder="e.g. Server backups" required /></label><span className="cloud-folder-destination">{currentPath || "My Cloud"}</span><button className="button primary" disabled={busy || !folderDraft.trim()} type="submit"><Plus size={14} /> Create</button><button className="icon-button" type="button" title="Cancel" aria-label="Cancel new folder" onClick={() => { setFolderFormOpen(false); setFolderDraft(""); }}><X size={16} /></button></form>}
     <div className="cloud-stats cloud-drive-stats"><div><span>FILES</span><b>{files.length}</b></div><div><span>FOLDERS</span><b>{folders.length}</b></div><div><span>STORAGE USED</span><b>{formatBytes(usedBytes)}</b></div><div><span>MAX / FILE</span><b>20 GB</b></div></div>
     <div className="cloud-drive panel">
