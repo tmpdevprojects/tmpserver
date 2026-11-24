@@ -246,6 +246,16 @@ def cloud_files():
     return sorted(result, key=lambda item: item["path"].lower())
 
 
+def cloud_directories():
+    result = []
+    for root, directories, _ in os.walk(CLOUD_ROOT, followlinks=False):
+        directories[:] = [name for name in directories if name != os.path.basename(CLOUD_UPLOADS_ROOT) and not name.startswith(".tmpserver-upload-") and not os.path.islink(os.path.join(root, name))]
+        for name in directories:
+            relative = os.path.relpath(os.path.join(root, name), CLOUD_ROOT).replace(os.sep, "/")
+            result.append(relative)
+    return sorted(result, key=str.lower)
+
+
 def valid_upload_id(value):
     value = str(value or "")
     return value if re.fullmatch(r"[a-f0-9]{32}", value) else None
@@ -702,7 +712,8 @@ class Handler(BaseHTTPRequestHandler):
             if not auth_user(self):
                 self.send_json(401, {"error": "authenticated owner session required"})
                 return
-            self.send_json(200, {"files": cloud_files(), "usedBytes": sum(item["size"] for item in cloud_files())})
+            files = cloud_files()
+            self.send_json(200, {"files": files, "folders": cloud_directories(), "usedBytes": sum(item["size"] for item in files)})
             return
         if self.path == "/api/websites":
             if not auth_user(self):
@@ -804,12 +815,29 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 self.send_json(400, {"error": f"Minecraft plugin operation failed: {error}"})
                 return
-        if parsed.path in {"/api/cloud/upload", "/api/cloud/upload-chunk", "/api/cloud/upload-complete", "/api/cloud/upload-cancel", "/api/cloud/delete"}:
+        if parsed.path in {"/api/cloud/upload", "/api/cloud/upload-chunk", "/api/cloud/upload-complete", "/api/cloud/upload-cancel", "/api/cloud/delete", "/api/cloud/folder"}:
             if not auth_user(self):
                 self.send_json(401, {"error": "authenticated owner session required"})
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
+                if parsed.path == "/api/cloud/folder":
+                    if not 0 <= length <= 4096:
+                        self.send_json(413, {"error": "Invalid Cloud folder request."})
+                        return
+                    payload = json.loads(self.rfile.read(length) or b"{}")
+                    if not isinstance(payload, dict):
+                        raise ValueError("Cloud folder request must be a JSON object.")
+                    target = safe_cloud_path(payload.get("path"))
+                    if not target:
+                        raise ValueError("Choose a valid folder path inside Cloud storage.")
+                    if not os.path.isdir(os.path.dirname(target)):
+                        raise ValueError("The parent folder does not exist in Cloud storage.")
+                    if os.path.lexists(target):
+                        raise ValueError("A file or folder with that name already exists.")
+                    os.mkdir(target)
+                    self.send_json(200, {"ok": True, "folder": os.path.relpath(target, CLOUD_ROOT).replace(os.sep, "/")})
+                    return
                 if parsed.path == "/api/cloud/upload-chunk":
                     query = parse_qs(parsed.query)
                     target = safe_cloud_path(query.get("path", [""])[0])

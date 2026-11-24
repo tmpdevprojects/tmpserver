@@ -314,3 +314,70 @@ table { width: 100%; border-collapse: collapse; min-width: 720px; } th { color: 
 .history-unavailable { min-height: 92px; display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 12px 16px; border: 1px dashed #314257; background: #0c141f; }
 .history-unavailable b { color: #aebdcb; font: 500 10px "IBM Plex Mono", monospace; }
 .history-unavailable span { max-width: 36ch; color: #6f8297; font-size: 10px; line-height: 1.45; }
+
+
+/* Drive-inspired Cloud browser */
+.cloud-drive { overflow: hidden; border: 1px solid var(--border-soft); background: var(--surface); }
+.cloud-drive-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; border-bottom: 1px solid var(--border-soft); }
+.cloud-breadcrumbs, .cloud-breadcrumbs > span { display: flex; align-items: center; gap: 7px; min-width: 0; color: #6f8298; }
+.cloud-breadcrumbs { overflow: hidden; }
+.cloud-breadcrumbs button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; border: 0; background: none; color: #8fa1b6; font: 500 11px "IBM Plex Mono", monospace; cursor: pointer; white-space: nowrap; }
+.cloud-breadcrumbs button.current { color: #e4f2ff; }
+.cloud-breadcrumbs button:hover { color: var(--cyan); }
+.cloud-search { display: flex; align-items: center; gap: 8px; width: min(270px, 38%); padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 4px; color: #637790; background: #0c131d; }
+.cloud-search:focus-within { border-color: #32768a; }
+.cloud-search input { width: 100%; min-width: 0; border: 0; outline: none; color: #d5dfed; background: transparent; font: 11px "IBM Plex Sans", sans-serif; }
+.cloud-search input::placeholder { color: #586c82; }
+.cloud-category-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 10px 14px 0; border-bottom: 1px solid var(--border-soft); scrollbar-width: thin; }
+.cloud-category-tabs button { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; padding: 9px 11px 10px; border: 0; border-bottom: 2px solid transparent; color: #7f91a6; background: transparent; font-size: 11px; cursor: pointer; }
+.cloud-category-tabs button:hover { color: #d9e8f4; }
+.cloud-category-tabs button.active { border-bottom-color: var(--cyan); color: #e4f4ff; }
+.cloud-category-tabs button span { padding: 2px 5px; border-radius: 9px; color: #8294a8; background: #1b2736; font: 9px "IBM Plex Mono", monospace; }
+.cloud-current-path { display: flex; align-items: end; justify-content: space-between; gap: 14px; padding: 17px 16px 12px; }
+.cloud-current-path .eyebrow { margin: 0 0 4px; }
+.cloud-current-path h3 { margin: 0; color: #e4edf7; font-size: 16px; font-weight: 600; }
+.cloud-current-path > span { color: #71839a; font: 10px "IBM Plex Mono", monospace; white-space: nowrap; }
+.cloud-drive-table { border: 0; border-top: 1px solid var(--border-soft); border-radius: 0; }
+.cloud-drive-table .cloud-row { grid-template-columns: minmax(0, 1fr) 100px 190px 78px; }
+.cloud-drive-table .cloud-head { border-top: 0; }
+.cloud-folder-name { width: 100%; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.cloud-folder-name:hover { color: #f0f8ff; }
+.cloud-folder-name svg:first-child { color: #82b5cc; }
+.cloud-folder-open { margin-left: auto; color: #586f85 !important; }
+.cloud-folder-row:hover { background: #121e2b; }
+.cloud-drive-footer { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border-soft); color: #65788e; font: 9px "IBM Plex Mono", monospace; }
+.cloud-path-note { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: #73869d; font-size: 10px; }
+.cloud-path-note svg { color: var(--cyan); }
+.cloud-path-note code { color: #a5d6df; font: 10px "IBM Plex Mono", monospace; }
+.cloud-drive-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.cloud-new-folder { display: grid; grid-template-columns: auto minmax(160px, 1fr) auto auto auto; align-items: end; gap: 12px; padding: 14px; }
+.cloud-new-folder > svg { align-self: center; color: var(--cyan); }
+.cloud-new-folder .field-label { gap: 5px; margin: 0; }
+.cloud-folder-destination { align-self: center; color: #6f8298; font: 10px "IBM Plex Mono", monospace; }
+.cloud-new-folder .field-label input { padding: 8px 10px; }
+
+@media (max-width: 760px) {
+  .cloud-drive-toolbar { align-items: stretch; flex-direction: column; }
+  .cloud-search { width: 100%; }
+  .cloud-drive-table .cloud-row { grid-template-columns: minmax(0, 1fr) 70px 64px; gap: 8px; padding: 0 11px; }
+  .cloud-drive-table .cloud-row > span:nth-child(3) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cloud-drive-table .cloud-row > span:nth-child(4) { grid-column: 3; }
+  .cloud-drive-table .cloud-head { grid-template-columns: minmax(0, 1fr) 70px 64px; }
+  .cloud-drive-table .cloud-head > span:nth-child(4) { display: none; }
+  .cloud-new-folder { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .cloud-folder-destination { grid-column: 2; }
+  .cloud-new-folder .button { grid-column: 2; }
+  .cloud-new-folder .icon-button { grid-column: 3; grid-row: 2; }
+  .cloud-drive-footer { flex-direction: column; }
+}
+@media (max-width: 520px) {
+  .cloud-drive-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cloud-current-path { align-items: flex-start; flex-direction: column; }
+  .cloud-drive-table .cloud-row { grid-template-columns: minmax(0, 1fr) 60px 70px; }
+  .cloud-drive-table .cloud-row > span:nth-child(3) { display: none; }
+  .cloud-drive-table .cloud-row > span:nth-child(4) { grid-column: 3; }
+  .cloud-drive-table .cloud-head { grid-template-columns: minmax(0, 1fr) 60px 70px; }
+  .cloud-drive-table .cloud-head > span:nth-child(3) { display: none; }
+  .cloud-new-folder { grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px; }
+  .cloud-new-folder .button { width: 100%; }
+}

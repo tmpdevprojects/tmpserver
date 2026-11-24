@@ -1,6 +1,6 @@
 # TMP Server dashboard implementation status
 
-Checked items below describe code present in this repository; they do not mean the updated host agent has already been deployed. On 2026-11-24, `https://tmpserver.com/` and the unauthenticated `https://api.tmpserver.com/api/health` endpoint both returned HTTP 200. This confirms basic reachability only; authenticated host operations and deployment of this repository's updated `host-agent.py` remain unverified.
+Checked items below describe code present in this repository; they do not mean the updated host agent has already been deployed. On 2026-11-24, `https://tmpserver.com/` and the unauthenticated `https://api.tmpserver.com/api/health` endpoint previously returned HTTP 200. After the user's host-agent restart, systemd reported `active` but a direct request to `127.0.0.1:8787/api/health` was refused; authenticated host operations are currently unverified until the listener is restored.
 
 ## Owner access and public dashboard
 - [x] Keep the Pages dashboard Supabase-authenticated and limit browser and host-agent access to `charliehenworth92@gmail.com`; do not restore member/invite access or expose host telemetry through the unauthenticated health endpoint.
@@ -29,8 +29,14 @@ Checked items below describe code present in this repository; they do not mean t
 - [x] Bound Docker log retrieval, tolerate per-container timeouts, and globally order the returned log snapshot using the original container timestamps. State that Docker logs are not systemd journal, Caddy access logs or persistent history.
 - [x] Audit visible controls and copy so unsupported operations are read-only/unavailable rather than portrayed as working.
 
+## Cloud organization, logs, mail, and Bedrock connectivity
+- [x] Put output logs in a separate tab so they are no longer duplicated on Overview, and retain the dedicated filtered Logs view. Docker logs poll only while the Logs page is selected.
+- [x] Make Cloud look better and have separate tabs/folders for different items like Google does; preserve arbitrary file types, nested paths, 20 GiB per-file uploads, and safe authenticated file operations. Added authenticated folder listing/creation, breadcrumbs, local categories, current-folder uploads, and responsive layout; new backend routes require host update and verification.
+- [ ] Configure in a Gmail-like mail client using the same info for the email pulse currently. Keep credentials server-side; implement inbox/read/search/send only if the existing provider configuration supports those operations, and do not represent SMTP-only sending as an inbox.
+- [ ] Restore Bedrock access for the reported Terracotta initial-connection error. Verify Geyser/Floodgate, supported NetherNet transport, TCP signaling and UDP gameplay port exposure; make no world-data or HDD changes.
+
 ## Remaining activation and host-side work
 - [ ] Cloudflare/API reachability is confirmed by the user's successful authenticated Cloud upload (2026-11-24); verify that the tunnel stays connected and separately test Cloud listing/deletion, plugin, settings, logs and state routes.
-- [ ] Deploy the new `host-agent.py` to `/opt/tmpserver/app/host-agent.py`, restart `tmpserver-host-agent`, and verify authenticated `/api/settings`, `/api/cloud/*`, `/api/minecraft/plugins`, `/api/logs`, and `/api/state` endpoints from the dashboard.
+- [ ] The user fast-forwarded to current `origin/main`, passed the host-agent syntax check and restarted `tmpserver-host-agent`; systemd said `active` but the immediate localhost health request was refused. Diagnose the listener before verifying authenticated `/api/settings`, `/api/cloud/*`, `/api/minecraft/plugins`, `/api/logs`, and `/api/state` routes.
 - [ ] Verify or install the host-side shutdown/unplug backup trigger; no shutdown hook is present in this repository, and the dashboard does not claim that such a hook is active.
 - [ ] Locate the Linux host's hourly digest script or add it to the repository before changing or claiming its OS label. `ops/tmpserver-hourly-digest.py` is absent from the repository; its host-side copy was not inspected or modified in this work.
