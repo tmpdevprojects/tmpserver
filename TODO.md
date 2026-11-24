@@ -8,9 +8,9 @@ Checked items below describe code present in this repository; they do not mean t
 - [x] Keep the dashboard free of fabricated live metrics, uptime, logs, activity, alerts, and service states; display live host data only from the authenticated agent.
 
 ## Minecraft, websites, and manual registry
-- [x] Keep Minecraft lifecycle, settings, console, whitelist and backup operations connected to allowlisted host-agent actions; confirm backups before controlled stop/restart/update/settings changes.
+- [ ] Keep Minecraft lifecycle, settings, console, whitelist and backup operations connected to allowlisted host-agent actions; confirm backups before controlled stop/restart/update/settings changes. Settings must read and update quoted as well as bare numeric YAML values in the existing Compose file without replacing unrelated configuration.
 - [x] Keep static website deployment separate from Cloud: websites use ZIP archives only, with the existing 50 MiB limit and static `index.html` requirement; Node/PHP runtimes are not presented as available.
-- [x] Persist manually added service/site entries in browser-local storage, merge them with live host polling, and offer manual Running/Degraded/Stopped statuses only for entries not linked to host-managed services. Label these as browser-local display states that do not execute host commands.
+- [x] Persist manually added service/site entries in browser-local storage, merge them with live host polling, and offer manual Running/Degraded/Stopped statuses only for entries not linked to host-managed services. Make off-platform website entries findable and editable/removable directly from the Websites page; migrate valid older browser-local records so missing legacy flags do not hide their controls. Label these as browser-local display states that do not execute host commands.
 - [x] Keep lifecycle actions read-only for Docker containers without configured operations; only expose real Minecraft and managed-website operations.
 
 ## OS identity and external storage
@@ -30,7 +30,7 @@ Checked items below describe code present in this repository; they do not mean t
 - [x] Audit visible controls and copy so unsupported operations are read-only/unavailable rather than portrayed as working.
 
 ## Remaining activation and host-side work
-- [ ] Confirm the Cloudflare Tunnel remains connected and verify owner-authenticated host routes after deploying the updated agent; an HTTP 200 from `/api/health` alone does not verify those operations.
-- [ ] After tunnel recovery, deploy this repository's `host-agent.py` to `/opt/tmpserver/app/host-agent.py`, restart `tmpserver-host-agent`, and verify authenticated `/api/settings`, `/api/cloud/*`, `/api/minecraft/plugins`, `/api/logs`, and `/api/state` endpoints from the dashboard.
+- [ ] Cloudflare/API reachability is confirmed by the user's successful authenticated Cloud upload (2026-11-24); verify that the tunnel stays connected and separately test Cloud listing/deletion, plugin, settings, logs and state routes.
+- [ ] Deploy the new `host-agent.py` to `/opt/tmpserver/app/host-agent.py`, restart `tmpserver-host-agent`, and verify authenticated `/api/settings`, `/api/cloud/*`, `/api/minecraft/plugins`, `/api/logs`, and `/api/state` endpoints from the dashboard.
 - [ ] Verify or install the host-side shutdown/unplug backup trigger; no shutdown hook is present in this repository, and the dashboard does not claim that such a hook is active.
 - [ ] Locate the Linux host's hourly digest script or add it to the repository before changing or claiming its OS label. `ops/tmpserver-hourly-digest.py` is absent from the repository; its host-side copy was not inspected or modified in this work.

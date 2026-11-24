@@ -524,13 +524,14 @@ def owner_user(user):
 def minecraft_settings():
     values = {"viewDistance": 0, "simulationDistance": 0, "maxPlayers": 0, "whitelist": False}
     try:
-        with open(os.path.join(os.path.dirname(COMPOSE_FILE), "compose.yml"), "r", encoding="utf-8") as file:
+        with open(COMPOSE_FILE, "r", encoding="utf-8") as file:
             text = file.read()
-        for key, pattern in [("viewDistance", r"VIEW_DISTANCE:\s*(\d+)"), ("simulationDistance", r"SIMULATION_DISTANCE:\s*(\d+)"), ("maxPlayers", r"MAX_PLAYERS:\s*(\d+)")]:
+        for key, setting in [("viewDistance", "VIEW_DISTANCE"), ("simulationDistance", "SIMULATION_DISTANCE"), ("maxPlayers", "MAX_PLAYERS")]:
+            pattern = rf"(?m)^[ \t]*{re.escape(setting)}[ \t]*:[ \t]*(?P<quote>['\"]?)(\d+)(?P=quote)[ \t]*(?:#.*)?$"
             match = re.search(pattern, text)
             if match:
-                values[key] = int(match.group(1))
-        values["whitelist"] = bool(re.search(r"ENABLE_WHITELIST:\s*true", text, re.IGNORECASE))
+                values[key] = int(match.group(2))
+        values["whitelist"] = bool(re.search(r"(?mi)^[ \t]*ENABLE_WHITELIST[ \t]*:[ \t]*(?P<quote>['\"]?)true(?P=quote)[ \t]*(?:#.*)?$", text))
     except (OSError, ValueError):
         pass
     return values
@@ -549,9 +550,10 @@ def update_minecraft_settings(payload):
         raise ValueError("Max players must be between 1 and 1000.")
     with open(COMPOSE_FILE, "r", encoding="utf-8") as file:
         text = file.read()
-    replacements = [(r"(?m)^(\s*VIEW_DISTANCE:\s*)\d+", rf"\g<1>{view_distance}"), (r"(?m)^(\s*SIMULATION_DISTANCE:\s*)\d+", rf"\g<1>{simulation_distance}"), (r"(?m)^(\s*MAX_PLAYERS:\s*)\d+", rf"\g<1>{max_players}")]
-    for pattern, replacement in replacements:
-        text, count = re.subn(pattern, replacement, text, count=1)
+    replacements = [("VIEW_DISTANCE", view_distance), ("SIMULATION_DISTANCE", simulation_distance), ("MAX_PLAYERS", max_players)]
+    for setting, value in replacements:
+        pattern = rf"(?m)^([ \t]*{setting}[ \t]*:[ \t]*)(?P<quote>['\"]?)(\d+)(?P=quote)([ \t]*(?:#.*)?)$"
+        text, count = re.subn(pattern, lambda match: f"{match.group(1)}{match.group('quote')}{value}{match.group('quote')}{match.group(4)}", text, count=1)
         if count != 1:
             raise ValueError("Minecraft compose file is missing a supported setting.")
     backup_path = f"{COMPOSE_FILE}.settings.bak"

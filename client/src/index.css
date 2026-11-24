@@ -204,7 +204,18 @@ table { width: 100%; border-collapse: collapse; min-width: 720px; } th { color: 
 .website-meta { display: flex; gap: 14px; padding: 10px 0; border-top: 1px solid var(--border-soft); color: #70849c; font: 500 9px "IBM Plex Mono", monospace; }
 .website-actions { display: flex; align-items: center; gap: 7px; margin-top: 9px; }
 .website-actions .button { flex: 1; }
+.external-sites-panel { margin-top: 22px; padding: 18px; border: 1px solid var(--border-soft); background: var(--surface); }
+.external-sites-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.external-sites-heading h2 { margin: 0; color: #dfeaf7; font: 500 16px "IBM Plex Mono", monospace; }
+.external-sites-panel > .route-help { margin: 10px 0 14px; }
+.external-site-card { border-color: #3a4559; }
+.external-site-domain { display: block; text-decoration: none; }
+.external-site-controls { display: flex; align-items: flex-end; gap: 9px; }
+.external-site-controls .field-label { flex: 1; margin: 0; }
+.external-site-controls .button { min-height: 38px; }
+.external-sites-empty { min-height: 110px; }
 @media (max-width: 620px) { .website-create { grid-template-columns: 1fr; }.website-actions { flex-wrap: wrap; }.website-actions .button { min-width: 120px; } }
+@media (max-width: 620px) { .external-sites-panel { padding: 14px; }.external-sites-heading { align-items: stretch; flex-direction: column; }.external-site-controls { align-items: stretch; flex-direction: column; }.external-site-controls .button { width: 100%; } }
 
 .mobile-top-menu { display: none; }
 @media (max-width: 680px) {
