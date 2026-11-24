@@ -11,7 +11,7 @@ Continue the existing React + TypeScript + Vite control panel published as a sta
 - `.github/workflows/deploy-pages.yml`: build and publish the static dashboard using the stable API hostname.
 
 ## Requested behavior and implementation boundaries
-Display the operating-system identity exactly as `TMP x Triumphant OS v27.13.0.` in dashboard telemetry and the host snapshot. Keep website ZIP deployment capped at 50 MiB and separate from Cloud files. Cloud accepts any file type up to 20 GiB per file; upload in bounded sequential chunks so neither the browser nor host agent buffers the full file in memory. Existing delete/download paths remain authenticated and path-safe.
+Display the operating-system identity exactly as `TMP x Triumphant OS v27.13.0` in dashboard telemetry and the host snapshot. Keep website ZIP deployment capped at 50 MiB and separate from Cloud files. Cloud accepts any file type up to 20 GiB per file; upload in bounded sequential chunks so neither the browser nor host agent buffers the full file in memory. Existing delete/download paths remain authenticated and path-safe.
 
 Report the external HDD expected at `/mnt/tmpserver-hdd` only as mounted when it is actually mounted. Show its real filesystem capacity, free space, and whether `/opt/tmpserver/cloud` is actually backed by that device. Identify `/mnt/tmpserver-hdd/tmpserver-restic` as the system-snapshot target directory and report directory presence only; do not imply snapshot history or restic repository integrity is verified. Do not format, repartition, or mutate the drive while gathering telemetry.
 

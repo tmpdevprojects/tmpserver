@@ -202,7 +202,7 @@ def host_state():
     for site in read_websites():
         services.append({"name": site["name"], "slug": site["slug"], "status": "running" if site.get("active") else "stopped", "ports": f"HTTPS · {site['domain']}", "kind": "Web app", "domain": site["domain"], "files": website_state(site)["files"], "bytes": website_state(site)["bytes"]})
     return {
-        "host": {"hostname": os.uname().nodename, "os": "TMP x Triumphant OS v27.13.0.", "architecture": os.uname().machine, "uptimeSeconds": round(uptime), "agentUptimeSeconds": round(time.time() - STARTED)},
+        "host": {"hostname": os.uname().nodename, "os": "TMP x Triumphant OS v27.13.0", "architecture": os.uname().machine, "uptimeSeconds": round(uptime), "agentUptimeSeconds": round(time.time() - STARTED)},
         "memory": {"totalBytes": total, "availableBytes": available, "usedPercent": round((total - available) / total * 100, 1) if total else 0},
         "disk": {"totalBytes": disk.total, "freeBytes": disk.free, "usedPercent": round((disk.total - disk.free) / disk.total * 100, 1) if disk.total else 0},
         "network": network,

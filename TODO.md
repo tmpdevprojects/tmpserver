@@ -14,7 +14,7 @@ Checked items below describe code present in this repository; they do not mean t
 - [x] Keep lifecycle actions read-only for Docker containers without configured operations; only expose real Minecraft and managed-website operations.
 
 ## OS identity and external storage
-- [x] Display the OS identity exactly as `TMP x Triumphant OS v27.13.0.` in host telemetry, diagnostics and settings/reporting.
+- [x] Display the OS identity exactly as `TMP x Triumphant OS v27.13.0` in host telemetry, diagnostics and settings/reporting.
 - [x] Detect `/mnt/tmpserver-hdd` as mounted only when it is truly mounted; report capacity, used/free space, whether `/opt/tmpserver/cloud` is backed by that external drive, and the `/mnt/tmpserver-hdd/tmpserver-restic` target-directory path/presence without claiming backup history or repository integrity.
 - [x] Do not erase, partition, format or migrate the 1 TB external HDD.
 
