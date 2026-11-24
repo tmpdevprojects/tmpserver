@@ -18,9 +18,9 @@ export function isOwnerSession(session: Session | null) {
 }
 
 export function isAllowedSession(session: Session | null) {
-  return isOwnerSession(session) || session?.user.app_metadata?.tmpserver_access === true;
+  return isOwnerSession(session);
 }
 
 export function sessionLabel(session: Session | null) {
-  return isOwnerSession(session) ? "owner" : "invited member";
+  return isOwnerSession(session) ? "owner" : "unauthorized";
 }

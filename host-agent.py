@@ -11,6 +11,8 @@ import subprocess
 import time
 import tempfile
 import zipfile
+import selectors
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from urllib.error import HTTPError, URLError
@@ -38,9 +40,22 @@ CLOUD_ROOT = "/opt/tmpserver/cloud"
 WEBSITES_ROOT = "/opt/tmpserver/websites"
 WEBSITES_INDEX = os.path.join(WEBSITES_ROOT, "sites.json")
 CADDYFILE = "/etc/caddy/Caddyfile"
-MAX_UPLOAD = 50 * 1024 * 1024
+MAX_CLOUD_FILE_SIZE = 20 * 1024**3
+CLOUD_UPLOAD_CHUNK_BYTES = 64 * 1024**2
+MAX_CLOUD_UPLOAD_CHUNKS = (MAX_CLOUD_FILE_SIZE + CLOUD_UPLOAD_CHUNK_BYTES - 1) // CLOUD_UPLOAD_CHUNK_BYTES
+MAX_WEBSITE_UPLOAD = 50 * 1024**2
+MAX_PLUGIN_UPLOAD = 50 * 1024**2
+MAX_LOG_CONTAINERS = 32
+MAX_LOG_LIST_BYTES = 32 * 1024
+MAX_LOG_CONTAINER_BYTES = 64 * 1024
+MAX_LOG_TOTAL_BYTES = 256 * 1024
+MINECRAFT_DATA_ROOT = "/opt/tmpserver/minecraft/data"
+MINECRAFT_PLUGINS_ROOT = os.path.join(MINECRAFT_DATA_ROOT, "plugins")
+EXTERNAL_HDD_ROOT = "/mnt/tmpserver-hdd"
+CLOUD_UPLOADS_ROOT = os.path.join(CLOUD_ROOT, ".tmpserver-upload-staging")
 os.makedirs(CLOUD_ROOT, exist_ok=True)
 os.makedirs(WEBSITES_ROOT, exist_ok=True)
+os.makedirs(CLOUD_UPLOADS_ROOT, exist_ok=True)
 
 
 def json_bytes(value):
@@ -50,6 +65,57 @@ def json_bytes(value):
 def run(command, timeout=15):
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def run_bounded_stdout(command, timeout=15, max_bytes=MAX_LOG_CONTAINER_BYTES):
+    try:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0)
+    except OSError:
+        return 127, "", False, 0
+    output = bytearray()
+    truncated = False
+    timed_out = False
+    started = time.monotonic()
+    try:
+        if process.stdout is None:
+            process.kill()
+            process.wait()
+            return 127, "", False, 0
+        os.set_blocking(process.stdout.fileno(), False)
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                if not selector.select(min(remaining, 0.2)):
+                    continue
+                try:
+                    chunk = os.read(process.stdout.fileno(), min(8192, max_bytes + 1 - len(output)))
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > max_bytes:
+                    truncated = True
+                    break
+    finally:
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        if process.stdout is not None:
+            process.stdout.close()
+    if timed_out:
+        raise subprocess.TimeoutExpired(command, timeout)
+    if truncated:
+        del output[max_bytes:]
+    return process.returncode or 0, output.decode("utf-8", errors="replace"), truncated, len(output)
 
 
 def network_state():
@@ -103,8 +169,7 @@ def auth_user(handler):
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
         return None
     email = str(user.get("email", "")).strip().lower()
-    app_metadata = user.get("app_metadata") or {}
-    if email == OWNER_EMAIL or app_metadata.get("tmpserver_access") is True:
+    if OWNER_EMAIL and email == OWNER_EMAIL:
         return user
     return None
 
@@ -135,9 +200,9 @@ def host_state():
             name, status, ports = (row.split("|", 2) + ["", ""])[:3]
             services.append({"name": name, "status": status, "ports": ports})
     for site in read_websites():
-        services.append({"name": site["name"], "status": "running" if site.get("active") else "stopped", "ports": f"HTTPS · {site['domain']}", "kind": "Web app", "domain": site["domain"], "files": website_state(site)["files"], "bytes": website_state(site)["bytes"]})
+        services.append({"name": site["name"], "slug": site["slug"], "status": "running" if site.get("active") else "stopped", "ports": f"HTTPS · {site['domain']}", "kind": "Web app", "domain": site["domain"], "files": website_state(site)["files"], "bytes": website_state(site)["bytes"]})
     return {
-        "host": {"hostname": os.uname().nodename, "os": "Ubuntu 24.04", "architecture": os.uname().machine, "uptimeSeconds": round(uptime), "agentUptimeSeconds": round(time.time() - STARTED)},
+        "host": {"hostname": os.uname().nodename, "os": "TMP x Triumphant OS v27.13.0.", "architecture": os.uname().machine, "uptimeSeconds": round(uptime), "agentUptimeSeconds": round(time.time() - STARTED)},
         "memory": {"totalBytes": total, "availableBytes": available, "usedPercent": round((total - available) / total * 100, 1) if total else 0},
         "disk": {"totalBytes": disk.total, "freeBytes": disk.free, "usedPercent": round((disk.total - disk.free) / disk.total * 100, 1) if disk.total else 0},
         "network": network,
@@ -150,19 +215,264 @@ def safe_cloud_path(value):
     candidate = os.path.normpath(str(value or "").strip().lstrip("/"))
     if not candidate or candidate == "." or candidate.startswith("..") or "/../" in f"/{candidate}/" or "\\" in candidate:
         return None
-    full = os.path.realpath(os.path.join(CLOUD_ROOT, candidate))
-    return full if full == CLOUD_ROOT or full.startswith(CLOUD_ROOT + os.sep) else None
+    parts = candidate.split(os.sep)
+    reserved = os.path.basename(CLOUD_UPLOADS_ROOT)
+    if any(part == reserved or part.startswith(".tmpserver-upload-") for part in parts):
+        return None
+    lexical = os.path.abspath(os.path.join(CLOUD_ROOT, candidate))
+    root_real = os.path.realpath(CLOUD_ROOT)
+    full = os.path.realpath(lexical)
+    if full == root_real or not full.startswith(root_real + os.sep):
+        return None
+    cursor = CLOUD_ROOT
+    for part in parts:
+        cursor = os.path.join(cursor, part)
+        if os.path.islink(cursor):
+            return None
+    return full
 
 
 def cloud_files():
     result = []
-    for root, _, names in os.walk(CLOUD_ROOT):
+    for root, directories, names in os.walk(CLOUD_ROOT):
+        directories[:] = [name for name in directories if name != os.path.basename(CLOUD_UPLOADS_ROOT)]
         for name in names:
             full = os.path.join(root, name)
+            if name.startswith(".tmpserver-upload-") or os.path.islink(full):
+                continue
             relative = os.path.relpath(full, CLOUD_ROOT).replace(os.sep, "/")
             stat = os.stat(full)
             result.append({"path": relative, "name": name, "size": stat.st_size, "modified": int(stat.st_mtime)})
     return sorted(result, key=lambda item: item["path"].lower())
+
+
+def valid_upload_id(value):
+    value = str(value or "")
+    return value if re.fullmatch(r"[a-f0-9]{32}", value) else None
+
+
+def cleanup_stale_cloud_uploads():
+    cutoff = time.time() - 24 * 60 * 60
+    try:
+        for entry in os.scandir(CLOUD_UPLOADS_ROOT):
+            try:
+                if entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                    shutil.rmtree(entry.path, ignore_errors=True)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+def receive_cloud_upload_chunk(upload_id, index, total, target, stream, length):
+    if not valid_upload_id(upload_id):
+        raise ValueError("Invalid upload identifier.")
+    if not 1 <= length <= CLOUD_UPLOAD_CHUNK_BYTES:
+        raise ValueError("Each upload chunk must be between 1 byte and 64 MiB.")
+    if not 1 <= total <= MAX_CLOUD_UPLOAD_CHUNKS or not 0 <= index < total:
+        raise ValueError("Invalid upload chunk number or count.")
+    if index < total - 1 and length != CLOUD_UPLOAD_CHUNK_BYTES:
+        raise ValueError("Every non-final upload chunk must be exactly 64 MiB.")
+    if not target or target == os.path.realpath(CLOUD_ROOT):
+        raise ValueError("Choose a safe Cloud file path.")
+    if shutil.disk_usage(CLOUD_UPLOADS_ROOT).free < length:
+        raise OSError("Not enough free space on Cloud storage for the next upload chunk.")
+    stage = os.path.join(CLOUD_UPLOADS_ROOT, upload_id)
+    os.makedirs(stage, mode=0o700, exist_ok=True)
+    relative = os.path.relpath(target, os.path.realpath(CLOUD_ROOT)).replace(os.sep, "/")
+    metadata_path = os.path.join(stage, "metadata.json")
+    metadata = {"path": relative, "total": total}
+    if os.path.exists(metadata_path):
+        with open(metadata_path, "r", encoding="utf-8") as file:
+            existing = json.load(file)
+        if existing != metadata:
+            raise ValueError("Upload identifier was already used for a different file.")
+    else:
+        temp_metadata = os.path.join(stage, "metadata.tmp")
+        with open(temp_metadata, "w", encoding="utf-8") as file:
+            json.dump(metadata, file)
+        os.replace(temp_metadata, metadata_path)
+    data_path = os.path.join(stage, "payload.part")
+    marker_path = os.path.join(stage, f"{index:05d}.done")
+    marker_tmp = marker_path + ".tmp"
+    remaining = length
+    try:
+        mode = "r+b" if os.path.exists(data_path) else "w+b"
+        with open(data_path, mode) as output:
+            output.seek(index * CLOUD_UPLOAD_CHUNK_BYTES)
+            while remaining:
+                block = stream.read(min(1024 * 1024, remaining))
+                if not block:
+                    raise OSError("The upload connection ended before the chunk was complete.")
+                output.write(block)
+                remaining -= len(block)
+            output.flush()
+            os.fsync(output.fileno())
+        with open(marker_tmp, "w", encoding="ascii") as marker:
+            marker.write(str(length))
+        os.replace(marker_tmp, marker_path)
+    except Exception:
+        try:
+            os.remove(marker_tmp)
+        except OSError:
+            pass
+        raise
+    os.utime(stage, None)
+
+
+def finish_cloud_upload(upload_id, target, expected_size, total):
+    if not valid_upload_id(upload_id):
+        raise ValueError("Invalid upload identifier.")
+    if type(expected_size) is not int or not 0 <= expected_size <= MAX_CLOUD_FILE_SIZE:
+        raise ValueError("Cloud files may be up to 20 GB each.")
+    expected_total = (expected_size + CLOUD_UPLOAD_CHUNK_BYTES - 1) // CLOUD_UPLOAD_CHUNK_BYTES
+    if type(total) is not int or total != expected_total:
+        raise ValueError("Upload chunk count does not match the file size.")
+    if not target or target == os.path.realpath(CLOUD_ROOT):
+        raise ValueError("Choose a safe Cloud file path.")
+    stage = os.path.join(CLOUD_UPLOADS_ROOT, upload_id)
+    os.makedirs(stage, mode=0o700, exist_ok=True)
+    relative = os.path.relpath(target, os.path.realpath(CLOUD_ROOT)).replace(os.sep, "/")
+    metadata_path = os.path.join(stage, "metadata.json")
+    metadata = {"path": relative, "total": total}
+    if total == 0 and not os.path.exists(metadata_path):
+        with open(metadata_path, "w", encoding="utf-8") as file:
+            json.dump(metadata, file)
+    if not os.path.isfile(metadata_path):
+        raise ValueError("Upload is incomplete: no chunks were received.")
+    with open(metadata_path, "r", encoding="utf-8") as file:
+        existing = json.load(file)
+    if existing != metadata:
+        raise ValueError("Upload details do not match the received chunks.")
+    for index in range(total):
+        marker_path = os.path.join(stage, f"{index:05d}.done")
+        expected_part_size = min(CLOUD_UPLOAD_CHUNK_BYTES, expected_size - index * CLOUD_UPLOAD_CHUNK_BYTES)
+        try:
+            with open(marker_path, "r", encoding="ascii") as marker:
+                received_part_size = int(marker.read())
+        except (OSError, ValueError):
+            raise ValueError(f"Upload is incomplete: chunk {index + 1} of {total} is missing.")
+        if received_part_size != expected_part_size:
+            raise ValueError(f"Upload chunk {index + 1} has an unexpected size.")
+    data_path = os.path.join(stage, "payload.part")
+    if total == 0 and not os.path.exists(data_path):
+        open(data_path, "wb").close()
+    if not os.path.isfile(data_path) or os.path.getsize(data_path) != expected_size:
+        raise ValueError("Uploaded size does not match the selected file.")
+    parent = os.path.dirname(target)
+    os.makedirs(parent, exist_ok=True)
+    stage_device = os.stat(stage).st_dev
+    target_device = os.stat(parent).st_dev
+    if stage_device == target_device:
+        os.replace(data_path, target)
+    else:
+        if shutil.disk_usage(parent).free < expected_size:
+            raise OSError("Not enough free space to place this upload on the target Cloud volume.")
+        fd, temporary_path = tempfile.mkstemp(prefix=".tmpserver-upload-", dir=parent)
+        try:
+            with os.fdopen(fd, "wb") as output, open(data_path, "rb") as source:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary_path, target)
+        except Exception:
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
+            raise
+    shutil.rmtree(stage, ignore_errors=True)
+    return next((entry for entry in cloud_files() if os.path.realpath(os.path.join(CLOUD_ROOT, entry["path"])) == target), None)
+
+
+
+def plugin_archive_valid(path):
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries = set(archive.namelist())
+        return "plugin.yml" in entries or "paper-plugin.yml" in entries
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
+def plugin_files():
+    if os.path.islink(MINECRAFT_PLUGINS_ROOT) or not os.path.isdir(MINECRAFT_PLUGINS_ROOT):
+        return []
+    result = []
+    for entry in os.scandir(MINECRAFT_PLUGINS_ROOT):
+        if entry.is_file(follow_symlinks=False) and entry.name.lower().endswith(".jar"):
+            stat = entry.stat(follow_symlinks=False)
+            result.append({"name": entry.name, "size": stat.st_size, "modified": int(stat.st_mtime)})
+    return sorted(result, key=lambda item: item["name"].lower())
+
+
+def log_timestamp_sort_key(value):
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})", value)
+    if not match:
+        return value
+    base, fraction, zone = match.groups()
+    return f"{base}.{(fraction or '').ljust(9, '0')[:9]}{zone}"
+
+
+def container_logs():
+    try:
+        code, output, list_truncated, _ = run_bounded_stdout(["docker", "ps", "--format", "{{.Names}}"], timeout=4, max_bytes=MAX_LOG_LIST_BYTES)
+    except subprocess.TimeoutExpired as error:
+        raise TimeoutError("Docker did not respond while listing containers for logs.") from error
+    if code != 0:
+        return []
+    entries = []
+    output_truncated = list_truncated
+    total_log_bytes = 0
+    deadline = time.monotonic() + 12
+    containers = sorted(set(output.splitlines()))
+    if len(containers) > MAX_LOG_CONTAINERS:
+        output_truncated = True
+    for container in containers[:MAX_LOG_CONTAINERS]:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", container):
+            continue
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            output_truncated = True
+            break
+        remaining_bytes = MAX_LOG_TOTAL_BYTES - total_log_bytes
+        if remaining_bytes <= 0:
+            output_truncated = True
+            break
+        byte_limit = min(MAX_LOG_CONTAINER_BYTES, remaining_bytes)
+        try:
+            log_code, text, truncated, bytes_read = run_bounded_stdout(["docker", "logs", "--tail", "40", "--timestamps", container], timeout=min(3, remaining), max_bytes=byte_limit)
+        except subprocess.TimeoutExpired:
+            continue
+        if log_code not in {0, 1} and not truncated:
+            continue
+        total_log_bytes += bytes_read
+        output_truncated = output_truncated or truncated
+        for line in deque(io.StringIO(text), maxlen=40):
+            line = line.rstrip("\r\n")
+            if not line.strip():
+                continue
+            timestamp = "—"
+            sortable_timestamp = ""
+            message = line
+            match = re.match(r"^(\S+)\s+(.*)$", line)
+            if match:
+                stamp, message = match.groups()
+                sortable_timestamp = stamp
+                timestamp = stamp.split("T")[-1].split(".")[0].rstrip("Z")
+            lowered = message.lower()
+            level = "ERROR" if re.search(r"\b(error|fatal|exception)\b", lowered) else "WARN" if re.search(r"\b(warn|warning)\b", lowered) else "INFO"
+            entries.append({"time": timestamp, "timestamp": sortable_timestamp, "level": level, "service": container, "message": message[:1000]})
+        if total_log_bytes >= MAX_LOG_TOTAL_BYTES:
+            output_truncated = True
+            break
+    entries.sort(key=lambda entry: (log_timestamp_sort_key(entry["timestamp"]), entry["service"]))
+    entries = entries[-200:]
+    if output_truncated and entries:
+        entries[-1]["message"] = entries[-1]["message"][:900] + " [some log output omitted at host-agent safety limit]"
+    return entries
+
+
 def website_slug(value):
     slug = re.sub(r"[^a-z0-9-]+", "-", str(value or "").strip().lower()).strip("-")
     return slug[:48] or None
@@ -250,17 +560,44 @@ def update_minecraft_settings(payload):
         file.write(text)
     return minecraft_settings()
 def admin_snapshot():
-    storage = []
-    code, output, _ = run(["df", "-P", "-B1", "/", CLOUD_ROOT, "/opt/tmpserver/websites"])
-    if code == 0:
-        for line in output.splitlines()[1:]:
-            fields = line.split()
-            if len(fields) >= 6:
-                try:
-                    total, used, free = int(fields[1]), int(fields[2]), int(fields[3])
-                    storage.append({"filesystem": fields[0], "mount": fields[5], "totalBytes": total, "usedBytes": used, "freeBytes": free, "usedPercent": round(used / total * 100, 1) if total else 0})
-                except ValueError:
-                    continue
+    def storage_row(path, label, role, available=True):
+        row = {"label": label, "role": role, "filesystem": "unknown", "mount": path, "available": bool(available), "mounted": bool(available and os.path.ismount(path)), "totalBytes": 0, "usedBytes": 0, "freeBytes": 0, "usedPercent": 0}
+        if not available or not os.path.exists(path):
+            row["available"] = False
+            row["mounted"] = False
+            return row
+        try:
+            usage = shutil.disk_usage(path)
+            row.update({"totalBytes": usage.total, "usedBytes": usage.used, "freeBytes": usage.free, "usedPercent": round(usage.used / usage.total * 100, 1) if usage.total else 0})
+            code, output, _ = run(["df", "-P", "-B1", path])
+            if code == 0:
+                fields = output.splitlines()[-1].split()
+                if fields:
+                    row["filesystem"] = fields[0]
+        except OSError:
+            row["available"] = False
+            row["mounted"] = False
+        return row
+
+    external_mounted = os.path.ismount(EXTERNAL_HDD_ROOT)
+    root_storage = storage_row("/", "System disk", "system")
+    cloud_storage = storage_row(CLOUD_ROOT, "Cloud files and Minecraft rolling backup", "cloud")
+    website_storage = storage_row(WEBSITES_ROOT, "Website deployments", "websites")
+    external = storage_row(EXTERNAL_HDD_ROOT, "External HDD · Cloud and backups", "external", external_mounted)
+    cloud_on_external = False
+    if external_mounted:
+        try:
+            cloud_on_external = os.stat(CLOUD_ROOT).st_dev == os.stat(EXTERNAL_HDD_ROOT).st_dev
+        except OSError:
+            cloud_on_external = False
+    external.update({
+        "cloudOnExternal": cloud_on_external,
+        "cloudPath": CLOUD_ROOT,
+        "systemBackupPath": os.path.join(EXTERNAL_HDD_ROOT, "tmpserver-restic"),
+        "systemBackupDirectoryPresent": bool(external_mounted and os.path.isdir(os.path.join(EXTERNAL_HDD_ROOT, "tmpserver-restic"))),
+        "minecraftBackupPath": os.path.join(CLOUD_ROOT, "minecraft-latest.tar.gz"),
+    })
+    storage = [root_storage, cloud_storage, website_storage, external]
     firewall = {"active": False, "defaultIncoming": "unknown", "rules": []}
     code, output, _ = run(["ufw", "status", "verbose"])
     if code == 0:
@@ -287,7 +624,11 @@ def admin_snapshot():
     code, output, _ = run(["systemctl", "--failed", "--no-legend"])
     if code == 0:
         failed_units = [line.split()[0] for line in output.splitlines() if line.split()]
-    return {"storage": storage, "docker": {"version": docker_version, "root": docker_root, "cpus": docker_cpus, "memoryBytes": docker_memory}, "firewall": firewall, "capabilities": {"kvm": os.path.exists("/dev/kvm"), "lxcInstalled": shutil.which("lxc") is not None, "docker": docker_version != "unknown", "nativeVmManagement": False}, "failedUnits": failed_units}
+    try:
+        load_average = list(os.getloadavg())
+    except (AttributeError, OSError):
+        load_average = [0, 0, 0]
+    return {"storage": storage, "externalStorage": external, "loadAverage": load_average, "cpuCount": os.cpu_count() or 0, "docker": {"version": docker_version, "root": docker_root, "cpus": docker_cpus, "memoryBytes": docker_memory}, "firewall": firewall, "capabilities": {"kvm": os.path.exists("/dev/kvm"), "lxcInstalled": shutil.which("lxc") is not None, "docker": docker_version != "unknown", "nativeVmManagement": False}, "failedUnits": failed_units}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -326,28 +667,50 @@ class Handler(BaseHTTPRequestHandler):
         return origin if origin in ALLOWED_ORIGINS else "https://tmpserver.com"
 
     def do_OPTIONS(self):
-        self.send_json(204, {})
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", self.cors_origin())
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Vary", "Origin")
+        self.end_headers()
 
     def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/minecraft/plugins":
+            if not auth_user(self):
+                self.send_json(401, {"error": "authenticated owner session required"})
+                return
+            self.send_json(200, {"plugins": plugin_files(), "pluginsPath": MINECRAFT_PLUGINS_ROOT})
+            return
+        if parsed.path == "/api/logs":
+            if not auth_user(self):
+                self.send_json(401, {"error": "authenticated owner session required"})
+                return
+            try:
+                entries = container_logs()
+            except TimeoutError as error:
+                self.send_json(504, {"error": str(error)})
+                return
+            self.send_json(200, {"logs": entries, "source": "docker containers", "limit": 200})
+            return
         if self.path == "/api/health":
-            self.send_json(200, {"ok": True, "service": "tmpserver-host-agent", "state": host_state()})
+            self.send_json(200, {"ok": True, "service": "tmpserver-host-agent"})
             return
         if self.path == "/api/cloud/files":
             if not auth_user(self):
-                self.send_json(401, {"error": "authenticated Supabase session required"})
+                self.send_json(401, {"error": "authenticated owner session required"})
                 return
             self.send_json(200, {"files": cloud_files(), "usedBytes": sum(item["size"] for item in cloud_files())})
             return
         if self.path == "/api/websites":
             if not auth_user(self):
-                self.send_json(401, {"error": "authenticated Supabase session required"})
+                self.send_json(401, {"error": "authenticated owner session required"})
                 return
             self.send_json(200, {"sites": [website_state(site) for site in read_websites()]})
             return
-        parsed = urlparse(self.path)
         if parsed.path == "/api/cloud/download":
             if not auth_user(self):
-                self.send_json(401, {"error": "authenticated Supabase session required"})
+                self.send_json(401, {"error": "authenticated owner session required"})
                 return
             path = safe_cloud_path(parse_qs(parsed.query).get("path", [""])[0])
             if not path or not os.path.isfile(path):
@@ -357,14 +720,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/state":
             if not auth_user(self):
-                self.send_json(401, {"error": "authenticated Supabase session required"})
+                self.send_json(401, {"error": "authenticated owner session required"})
                 return
             self.send_json(200, host_state())
             return
         if self.path == "/api/settings":
             user = auth_user(self)
             if not user:
-                self.send_json(401, {"error": "authenticated Supabase session required"})
+                self.send_json(401, {"error": "authenticated owner session required"})
                 return
             backup_path = os.path.join(CLOUD_ROOT, "minecraft-latest.tar.gz")
             backup_stat = os.stat(backup_path) if os.path.isfile(backup_path) else None
@@ -373,47 +736,170 @@ class Handler(BaseHTTPRequestHandler):
         self.send_json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path in {"/api/cloud/upload", "/api/cloud/delete"}:
+        parsed = urlparse(self.path)
+        if parsed.path in {"/api/minecraft/plugins/upload", "/api/minecraft/plugins/delete"}:
+            user = auth_user(self)
+            if not user:
+                self.send_json(401, {"error": "authenticated owner session required"})
+                return
+            if not owner_user(user):
+                self.send_json(403, {"error": "Only the configured TMP Server owner can change Minecraft plugins."})
+                return
+            try:
+                if parsed.path.endswith("/upload"):
+                    filename = parse_qs(parsed.query).get("filename", [""])[0]
+                    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,190}\.jar", filename, re.IGNORECASE):
+                        self.send_json(400, {"error": "Plugin filenames must be safe .jar filenames."})
+                        return
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 1 <= length <= MAX_PLUGIN_UPLOAD:
+                        self.send_json(413, {"error": "Minecraft plugin JARs must be between 1 byte and 50 MiB."})
+                        return
+                    if os.path.islink(MINECRAFT_DATA_ROOT) or os.path.islink(MINECRAFT_PLUGINS_ROOT):
+                        raise ValueError("The configured Minecraft plugins path must not be a symbolic link.")
+                    os.makedirs(MINECRAFT_PLUGINS_ROOT, exist_ok=True)
+                    fd, temporary_path = tempfile.mkstemp(prefix=".tmpserver-plugin-", suffix=".jar", dir=MINECRAFT_PLUGINS_ROOT)
+                    try:
+                        remaining = length
+                        with os.fdopen(fd, "wb") as output:
+                            while remaining:
+                                block = self.rfile.read(min(1024 * 1024, remaining))
+                                if not block:
+                                    raise OSError("The plugin upload ended before it was complete.")
+                                output.write(block)
+                                remaining -= len(block)
+                            output.flush()
+                            os.fsync(output.fileno())
+                        if not plugin_archive_valid(temporary_path):
+                            raise ValueError("The selected JAR is not a valid Bukkit/Paper plugin archive (plugin.yml or paper-plugin.yml is missing).")
+                        os.replace(temporary_path, os.path.join(MINECRAFT_PLUGINS_ROOT, filename))
+                    except Exception:
+                        try:
+                            os.remove(temporary_path)
+                        except OSError:
+                            pass
+                        raise
+                    self.send_json(200, {"ok": True, "plugin": next(item for item in plugin_files() if item["name"] == filename), "restartRequired": True})
+                    return
+                length = int(self.headers.get("Content-Length", "0"))
+                if length > 4096:
+                    self.send_json(413, {"error": "Invalid plugin deletion request."})
+                    return
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                filename = str(payload.get("name", ""))
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,190}\.jar", filename, re.IGNORECASE):
+                    self.send_json(400, {"error": "Choose a safe plugin JAR filename."})
+                    return
+                if os.path.islink(MINECRAFT_DATA_ROOT) or os.path.islink(MINECRAFT_PLUGINS_ROOT):
+                    raise ValueError("The configured Minecraft plugins path must not be a symbolic link.")
+                target = os.path.join(MINECRAFT_PLUGINS_ROOT, filename)
+                if not os.path.isfile(target) or os.path.islink(target):
+                    self.send_json(404, {"error": "Plugin JAR not found."})
+                    return
+                os.remove(target)
+                self.send_json(200, {"ok": True, "name": filename, "restartRequired": True, "note": "Only the JAR was removed; plugin configuration/data folders were left untouched."})
+                return
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                self.send_json(400, {"error": f"Minecraft plugin operation failed: {error}"})
+                return
+        if parsed.path in {"/api/cloud/upload", "/api/cloud/upload-chunk", "/api/cloud/upload-complete", "/api/cloud/upload-cancel", "/api/cloud/delete"}:
             if not auth_user(self):
-                self.send_json(401, {"error": "owner or invited member session required"})
+                self.send_json(401, {"error": "authenticated owner session required"})
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if length > MAX_UPLOAD:
-                    self.send_json(413, {"error": "file is larger than the 50 MB limit"})
+                if parsed.path == "/api/cloud/upload-chunk":
+                    query = parse_qs(parsed.query)
+                    target = safe_cloud_path(query.get("path", [""])[0])
+                    try:
+                        index = int(query.get("index", [""])[0])
+                        total = int(query.get("total", [""])[0])
+                    except ValueError:
+                        raise ValueError("Invalid upload chunk number or count.")
+                    if index == 0:
+                        cleanup_stale_cloud_uploads()
+                    receive_cloud_upload_chunk(query.get("uploadId", [""])[0], index, total, target, self.rfile, length)
+                    self.send_json(200, {"ok": True, "index": index, "total": total})
                     return
-                if self.path.endswith("/upload"):
+                if parsed.path == "/api/cloud/upload-complete":
+                    if length > 4096:
+                        self.send_json(413, {"error": "Invalid Cloud upload completion request."})
+                        return
+                    payload = json.loads(self.rfile.read(length) or b"{}")
+                    target = safe_cloud_path(payload.get("path"))
+                    entry = finish_cloud_upload(str(payload.get("uploadId", "")), target, payload.get("size"), payload.get("totalChunks"))
+                    if entry is None:
+                        raise ValueError("Completed file could not be found in Cloud storage.")
+                    self.send_json(200, {"ok": True, "file": entry})
+                    return
+                if parsed.path == "/api/cloud/upload-cancel":
+                    if length > 4096:
+                        self.send_json(413, {"error": "Invalid Cloud upload cancellation request."})
+                        return
+                    payload = json.loads(self.rfile.read(length) or b"{}")
+                    upload_id = valid_upload_id(payload.get("uploadId"))
+                    if not upload_id:
+                        self.send_json(400, {"error": "Invalid upload identifier."})
+                        return
+                    shutil.rmtree(os.path.join(CLOUD_UPLOADS_ROOT, upload_id), ignore_errors=True)
+                    self.send_json(200, {"ok": True})
+                    return
+                if parsed.path == "/api/cloud/upload":
+                    if length > MAX_CLOUD_FILE_SIZE + 1024 * 1024:
+                        self.send_json(413, {"error": "Cloud files may be up to 20 GB each."})
+                        return
                     content_type = self.headers.get("Content-Type", "")
-                    _, params = cgi.parse_header(content_type)
-                    body = self.rfile.read(length)
-                    form = cgi.FieldStorage(fp=io.BytesIO(body), headers=self.headers, environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type, "CONTENT_LENGTH": str(length)})
+                    if "multipart/form-data" not in content_type.lower():
+                        self.send_json(400, {"error": "Upload the file using multipart/form-data."})
+                        return
+                    form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type, "CONTENT_LENGTH": str(length)})
                     item = form["file"] if "file" in form else None
+                    if isinstance(item, list):
+                        self.send_json(400, {"error": "Upload one file at a time."})
+                        return
                     target = safe_cloud_path(form.getfirst("path", "") if "path" in form else (item.filename if item else ""))
-                    if not item or not target:
-                        self.send_json(400, {"error": "choose a file and a safe path"})
+                    if not item or not target or not getattr(item, "file", None):
+                        self.send_json(400, {"error": "Choose a file and a safe Cloud path."})
                         return
                     os.makedirs(os.path.dirname(target), exist_ok=True)
-                    with open(target, "wb") as file:
-                        shutil.copyfileobj(item.file, file)
-                    self.send_json(200, {"ok": True, "file": next(item for item in cloud_files() if os.path.realpath(os.path.join(CLOUD_ROOT, item["path"])) == target)})
+                    fd, temporary_path = tempfile.mkstemp(prefix=".tmpserver-upload-", dir=os.path.dirname(target))
+                    try:
+                        with os.fdopen(fd, "wb") as output:
+                            shutil.copyfileobj(item.file, output, length=1024 * 1024)
+                            output.flush()
+                            os.fsync(output.fileno())
+                        if os.path.getsize(temporary_path) > MAX_CLOUD_FILE_SIZE:
+                            raise ValueError("Cloud files may be up to 20 GB each.")
+                        os.replace(temporary_path, target)
+                    except Exception:
+                        try:
+                            os.remove(temporary_path)
+                        except OSError:
+                            pass
+                        raise
+                    entry = next((entry for entry in cloud_files() if os.path.realpath(os.path.join(CLOUD_ROOT, entry["path"])) == target), None)
+                    self.send_json(200, {"ok": True, "file": entry})
                     return
-                payload = json.loads(self.rfile.read(length))
+                if length > 4096:
+                    self.send_json(413, {"error": "Invalid Cloud deletion request."})
+                    return
+                payload = json.loads(self.rfile.read(length) or b"{}")
                 target = safe_cloud_path(payload.get("path"))
-                if not target or not os.path.isfile(target):
+                if not target or not os.path.isfile(target) or os.path.islink(target):
                     self.send_json(404, {"error": "file not found"})
                     return
                 os.remove(target)
                 self.send_json(200, {"ok": True, "path": payload.get("path")})
                 return
             except Exception as error:
-                self.send_json(400, {"error": f"cloud operation failed: {error}"})
+                self.send_json(400, {"error": f"Cloud operation failed: {error}"})
                 return
         website_match = re.fullmatch(r"/api/websites/([a-z0-9-]+)/(deploy|lifecycle|delete)", self.path)
         if self.path not in {"/api/minecraft/whitelist", "/api/minecraft/command", "/api/minecraft/lifecycle", "/api/minecraft/backup", "/api/minecraft/settings", "/api/websites"} and not website_match:
             self.send_json(404, {"error": "not found"})
             return
         if not auth_user(self):
-            self.send_json(401, {"error": "owner or invited member session required"})
+            self.send_json(401, {"error": "authenticated owner session required"})
             return
         if self.path == "/api/minecraft/settings":
             user = auth_user(self)
@@ -423,14 +909,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 payload = json.loads(self.rfile.read(length) or b"{}")
-                stop_code, stop_stdout, stop_stderr = run(["docker", "compose", "-f", COMPOSE_FILE, "stop", "minecraft"], timeout=60)
-                if stop_code != 0:
-                    self.send_json(502, {"error": "Minecraft could not be stopped safely; settings were not changed.", "detail": stop_stderr[-300:] or stop_stdout[-300:]})
-                    return
                 backup_code, backup_stdout, backup_stderr = run([BACKUP_SCRIPT], timeout=240)
                 if backup_code != 0:
-                    run(["docker", "compose", "-f", COMPOSE_FILE, "up", "-d", "minecraft"], timeout=90)
-                    self.send_json(502, {"error": "Minecraft backup failed; settings were not applied.", "detail": backup_stderr[-300:] or backup_stdout[-300:]})
+                    self.send_json(502, {"error": "Minecraft backup failed; settings were not applied and the server was left running.", "detail": backup_stderr[-300:] or backup_stdout[-300:]})
+                    return
+                stop_code, stop_stdout, stop_stderr = run(["docker", "compose", "-f", COMPOSE_FILE, "stop", "minecraft"], timeout=60)
+                if stop_code != 0:
+                    self.send_json(502, {"error": "Minecraft could not be stopped safely after backup; settings were not changed.", "detail": stop_stderr[-300:] or stop_stdout[-300:]})
                     return
                 try:
                     settings = update_minecraft_settings(payload)
@@ -450,8 +935,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/websites" or website_match:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if length > MAX_UPLOAD + 4096:
-                    self.send_json(413, {"error": "website upload is larger than the 50 MB limit"})
+                if length > MAX_WEBSITE_UPLOAD + 4096:
+                    self.send_json(413, {"error": "website ZIP upload is larger than the 50 MB limit"})
                     return
                 sites = read_websites()
                 if website_match and website_match.group(2) == "deploy":
@@ -459,7 +944,7 @@ class Handler(BaseHTTPRequestHandler):
                     if "multipart/form-data" not in content_type:
                         self.send_json(400, {"error": "Upload a ZIP file using multipart/form-data."})
                         return
-                    form = cgi.FieldStorage(fp=io.BytesIO(self.rfile.read(length)), headers=self.headers, environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type, "CONTENT_LENGTH": str(length)})
+                    form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type, "CONTENT_LENGTH": str(length)})
                     item = form["file"] if "file" in form else None
                     slug = website_match.group(1)
                     site = next((entry for entry in sites if entry["slug"] == slug), None)
@@ -473,7 +958,7 @@ class Handler(BaseHTTPRequestHandler):
                             shutil.copyfileobj(item.file, archive_file)
                         with zipfile.ZipFile(archive_path) as archive:
                             members = archive.infolist()
-                            if len(members) > 10000 or any(member.file_size > MAX_UPLOAD for member in members):
+                            if len(members) > 10000 or any(member.file_size > MAX_WEBSITE_UPLOAD for member in members):
                                 self.send_json(413, {"error": "ZIP contains too many or too-large files."})
                                 return
                             for member in members:
