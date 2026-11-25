@@ -17,7 +17,7 @@ fail() {
 verify_cloud_mount() {
   local hdd_row hdd_target hdd_source hdd_fstype hdd_device cloud_row cloud_target cloud_source cloud_fstype cloud_device source_device actual_uuid hdd_identity cloud_identity
 
-  hdd_row="$(findmnt -rn -M "$HDD_MOUNT" -o TARGET,SOURCE,FSTYPE,MAJ:MIN 2>/dev/null || true)"
+  hdd_row="$(findmnt -rn -M "$HDD_MOUNT" -o TARGET,SOURCE,FSTYPE,MAJ:MIN 2>/dev/null | awk '$3 != "autofs" { row = $0 } END { print row }' || true)"
   [[ -n "$hdd_row" ]] || fail "the required HDD is not mounted at $HDD_MOUNT."
   read -r hdd_target hdd_source hdd_fstype hdd_device <<<"$hdd_row"
   [[ "$hdd_target" == "$HDD_MOUNT" && "$hdd_fstype" != autofs ]] || fail "the HDD mount is only an automount placeholder or is at the wrong path."
