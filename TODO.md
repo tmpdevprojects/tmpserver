@@ -24,7 +24,7 @@ Checked items below describe code present in this repository; they do not mean e
 - [x] Show upload progress and actionable size/network/storage errors. Use browser streaming download where available and explain the large-file browser compatibility limit otherwise.
 
 ## Plugins, logs, diagnostics and administration
-- [x] Add an authenticated Minecraft plugin page backed by actual Paper plugin JARs; validate JAR archive descriptors, limit uploads, restrict changes to the configured owner, delete only the JAR (not plugin data folders), and state that a Minecraft restart is needed.
+- [x] Add an authenticated Minecraft plugin page backed by actual Paper plugin JARs; validate JAR archive descriptors, limit uploads, restrict changes to the configured owner, create uploaded JARs readable by Paper's UID 1000, delete only the JAR (not plugin data folders), and state that a Minecraft restart is needed.
 - [x] Add logs, alerts, diagnostics, admin and settings views based on host/Minecraft/network/disk/external-drive/Docker/firewall/systemd/backup telemetry. Clearly mark native VM/Proxmox management unavailable unless supported by the host.
 - [x] Bound Docker log retrieval, tolerate per-container timeouts, and globally order the returned log snapshot using the original container timestamps. State that Docker logs are not systemd journal, Caddy access logs or persistent history.
 - [x] Audit visible controls and copy so unsupported operations are read-only/unavailable rather than portrayed as working.
@@ -38,5 +38,6 @@ Checked items below describe code present in this repository; they do not mean e
 ## Remaining activation and host-side work
 - [ ] Cloudflare/API reachability is confirmed by the user's successful authenticated Cloud upload (2026-11-24); verify that the tunnel stays connected and separately test Cloud listing/deletion, plugin, settings, logs and state routes.
 - [ ] The user fast-forwarded to `46b284d`, passed the host-agent syntax check and restarted `tmpserver-host-agent`; systemd is `active` and localhost health returns HTTP 200. Verify authenticated `/api/settings`, `/api/cloud/*`, `/api/minecraft/plugins`, `/api/logs`, and `/api/state` routes.
+- [ ] Deploy the plugin-upload permission fix, then change only the existing `ArmorHUD.jar` from `root:root 0600` to a Paper-readable mode such as `0644`; do not recursively change plugin or world-data permissions. Restart Paper only after a successful backup and verify Geyser/Floodgate load.
 - [ ] Verify or install the host-side shutdown/unplug backup trigger; no shutdown hook is present in this repository, and the dashboard does not claim that such a hook is active.
 - [ ] Locate the Linux host's hourly digest script or add it to the repository before changing or claiming its OS label. `ops/tmpserver-hourly-digest.py` is absent from the repository; its host-side copy was not inspected or modified in this work.

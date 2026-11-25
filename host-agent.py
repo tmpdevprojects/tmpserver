@@ -775,6 +775,7 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         remaining = length
                         with os.fdopen(fd, "wb") as output:
+                            os.fchmod(output.fileno(), 0o644)
                             while remaining:
                                 block = self.rfile.read(min(1024 * 1024, remaining))
                                 if not block:
