@@ -131,12 +131,21 @@ def ensure_cloud_storage():
         status["message"] = f"The required external HDD {EXTERNAL_HDD_UUID} is not connected; Cloud and backup operations are blocked, with no system-disk fallback."
         return status
 
-    for unit in ("mnt-tmpserver-hdd.mount", "opt-tmpserver-cloud.mount"):
+    unit_specs = ((EXTERNAL_HDD_ROOT, "automount"), (EXTERNAL_HDD_ROOT, "mount"), (CLOUD_ROOT, "mount"))
+    units = []
+    for path, suffix in unit_specs:
+        escape_code, unit, _ = run(["systemd-escape", "--path", f"--suffix={suffix}", path], timeout=5)
+        if escape_code != 0 or not unit:
+            status["message"] = f"Could not resolve the systemd {suffix} unit for {path}; Cloud access is blocked."
+            return status
+        units.append(unit)
+
+    for unit in units:
         state_code, state, _ = run(["systemctl", "show", unit, "--property=ActiveState", "--value"], timeout=5)
         if state_code == 0 and state == "failed":
             run(["systemctl", "reset-failed", unit], timeout=5)
 
-    code, stdout, stderr = run(["systemctl", "start", "mnt-tmpserver-hdd.mount"], timeout=30)
+    code, stdout, stderr = run(["systemctl", "start", units[1]], timeout=30)
     if code != 0:
         status["message"] = f"The external HDD could not be mounted; Cloud access is blocked. {stderr[-240:] or stdout[-240:]}"
         return status
@@ -144,7 +153,7 @@ def ensure_cloud_storage():
     if not status["hddMounted"]:
         return status
 
-    code, stdout, stderr = run(["systemctl", "start", "opt-tmpserver-cloud.mount"], timeout=30)
+    code, stdout, stderr = run(["systemctl", "start", units[2]], timeout=30)
     if code != 0:
         status = cloud_storage_status()
         status["message"] = f"The HDD is connected, but its Cloud bind mount could not be activated; Cloud access is blocked. {stderr[-240:] or stdout[-240:]}"

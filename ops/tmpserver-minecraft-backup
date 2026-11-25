@@ -43,15 +43,19 @@ if [[ ! -e "/dev/disk/by-uuid/$HDD_UUID" ]]; then
   fail "external HDD UUID $HDD_UUID is not connected."
 fi
 
-for unit in mnt-tmpserver-hdd.mount opt-tmpserver-cloud.mount; do
+HDD_AUTOMOUNT_UNIT="$(systemd-escape --path --suffix=automount "$HDD_MOUNT")"
+HDD_MOUNT_UNIT="$(systemd-escape --path --suffix=mount "$HDD_MOUNT")"
+CLOUD_MOUNT_UNIT="$(systemd-escape --path --suffix=mount "$CLOUD")"
+
+for unit in "$HDD_AUTOMOUNT_UNIT" "$HDD_MOUNT_UNIT" "$CLOUD_MOUNT_UNIT"; do
   state="$(systemctl show "$unit" --property=ActiveState --value 2>/dev/null || true)"
   if [[ "$state" == failed ]]; then
     systemctl reset-failed "$unit" || true
   fi
 done
-systemctl start mnt-tmpserver-hdd.mount || fail "systemd could not mount $HDD_MOUNT."
+systemctl start "$HDD_MOUNT_UNIT" || fail "systemd could not mount $HDD_MOUNT."
 verify_cloud_mount
-systemctl start opt-tmpserver-cloud.mount || fail "systemd could not activate the Cloud bind mount."
+systemctl start "$CLOUD_MOUNT_UNIT" || fail "systemd could not activate the Cloud bind mount."
 verify_cloud_mount
 
 [[ -d "$DATA" ]] || fail "Minecraft data directory is missing: $DATA."
