@@ -123,6 +123,7 @@ input::placeholder { color: #4f6076; }
 .button.primary { color: #06151b; background: var(--cyan); border-color: var(--cyan); }
 .button.primary:hover { background: #72e5ff; }
 .button.secondary { background: #121c29; }
+.button.disabled { opacity: .45; cursor: not-allowed; }
 .button.full { width: 100%; }
 .button.danger-button { color: #f09a9a; background: #321b25; border-color: #63313a; }
 .button.danger-button:hover { color: #fff; background: #582530; }
@@ -349,6 +350,10 @@ table { width: 100%; border-collapse: collapse; min-width: 720px; } th { color: 
 .cloud-path-note { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: #73869d; font-size: 10px; }
 .cloud-path-note svg { color: var(--cyan); }
 .cloud-path-note code { color: #a5d6df; font: 10px "IBM Plex Mono", monospace; }
+.cloud-path-note.ready { color: #80d7b2; }
+.cloud-path-note.ready svg { color: #80d7b2; }
+.cloud-path-note.unavailable { color: #ffb47f; }
+.cloud-path-note.unavailable svg { color: #ff916f; }
 .cloud-drive-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .cloud-new-folder { display: grid; grid-template-columns: auto minmax(160px, 1fr) auto auto auto; align-items: end; gap: 12px; padding: 14px; }
 .cloud-new-folder > svg { align-self: center; color: var(--cyan); }

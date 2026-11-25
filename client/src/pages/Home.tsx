@@ -319,6 +319,7 @@ function Home() {
   const [cloudFiles, setCloudFiles] = useState<CloudFile[]>([]);
   const [cloudFolders, setCloudFolders] = useState<string[]>([]);
   const [cloudUsedBytes, setCloudUsedBytes] = useState(0);
+  const [cloudStorageAvailable, setCloudStorageAvailable] = useState<boolean | null>(null);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [cloudError, setCloudError] = useState("");
   const [cloudUploadProgress, setCloudUploadProgress] = useState<number | null>(null);
@@ -383,7 +384,18 @@ function Home() {
     if (!hostApiUrl || !supabase) throw new Error("Live host agent is not configured.");
     const { data } = await supabase.auth.getSession();
     const headers = new Headers(init.headers); headers.set("Authorization", `Bearer ${data.session?.access_token ?? ""}`);
-    return fetch(`${hostApiUrl}${path}`, { ...init, headers });
+    try {
+      const response = await fetch(`${hostApiUrl}${path}`, { ...init, headers });
+      if (response.status === 503) {
+        setCloudStorageAvailable(false);
+        setCloudFiles([]); setCloudFolders([]); setCloudUsedBytes(0);
+      }
+      return response;
+    } catch (error) {
+      setCloudStorageAvailable(null);
+      setCloudFiles([]); setCloudFolders([]); setCloudUsedBytes(0);
+      throw error;
+    }
   }
 
   async function loadLogs() {
@@ -399,11 +411,42 @@ function Home() {
   }, [session, nav]);
 
   async function loadCloudFiles(): Promise<boolean> {
-    try { const response = await cloudRequest("/api/cloud/files"); const payload = await response.json(); if (!response.ok) throw new Error(hostApiRouteError(response, payload, "Cloud file listing")); setCloudFiles(payload.files ?? []); setCloudFolders(payload.folders ?? []); setCloudUsedBytes(payload.usedBytes ?? 0); setCloudError(""); return true; }
-    catch (error) { setCloudError(error instanceof Error ? error.message : "Could not load cloud files."); return false; }
+    let unavailable = false;
+    try {
+      const response = await cloudRequest("/api/cloud/files");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        unavailable = response.status === 503 || payload.storage?.available === false;
+        if (unavailable) {
+          setCloudStorageAvailable(false);
+          setCloudFiles([]); setCloudFolders([]); setCloudUsedBytes(0);
+        }
+        throw new Error(hostApiRouteError(response, payload, "Cloud file listing"));
+      }
+      if (payload.storage?.available !== true) {
+        unavailable = true;
+        setCloudStorageAvailable(false);
+        setCloudFiles([]); setCloudFolders([]); setCloudUsedBytes(0);
+        throw new Error("The host agent has not confirmed the external HDD Cloud mount. Update the Linux host agent; uploads and backups remain disabled until HDD storage is verified.");
+      }
+      setCloudStorageAvailable(true);
+      setCloudFiles(payload.files ?? []); setCloudFolders(payload.folders ?? []); setCloudUsedBytes(payload.usedBytes ?? 0); setCloudError("");
+      return true;
+    } catch (error) {
+      if (!unavailable) setCloudStorageAvailable(null);
+      setCloudFiles([]); setCloudFolders([]); setCloudUsedBytes(0);
+      setCloudError(error instanceof Error ? error.message : "Could not load Cloud files.");
+      return false;
+    }
   }
 
-  useEffect(() => { if (session && hostApiUrl) void loadCloudFiles(); }, [session]);
+  useEffect(() => {
+    if (!session || !hostApiUrl) return;
+    void loadCloudFiles();
+    if (nav !== "cloud") return;
+    const timer = window.setInterval(() => void loadCloudFiles(), 15000);
+    return () => window.clearInterval(timer);
+  }, [session, nav]);
 
   async function loadWebsites(): Promise<boolean> {
     try {
@@ -613,7 +656,10 @@ function Home() {
     try {
       const response = await cloudRequest("/api/minecraft/backup", { method: "POST", headers: { "content-type": "application/json" } });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error ?? "Minecraft backup failed.");
+      if (!response.ok) {
+        if (response.status === 503) setCloudStorageAvailable(false);
+        throw new Error(payload.error ?? "Minecraft backup failed.");
+      }
       await loadCloudFiles();
       setNotice("Minecraft backup saved and the previous backup was overwritten.");
     } catch (error) { setCloudError(error instanceof Error ? error.message : "Minecraft backup failed."); }
@@ -741,7 +787,7 @@ function Home() {
     </aside>
     <main className="main-content">
       <header className="topbar"><button className="mobile-top-menu" onClick={() => setSidebarOpen(value => !value)} aria-label="Open navigation"><Menu size={18} /></button><div className="breadcrumbs"><span>Cluster</span><ChevronRight size={14} /><b>{hostState.host.hostname}</b><span className="slash">/</span><strong>{nav === "overview" ? "Overview" : nav === "plugins" ? "Minecraft Plugins" : nav[0].toUpperCase() + nav.slice(1)}</strong></div><div className="top-actions"><div className={`heartbeat ${hostError ? "stale" : ""}`}><span className="heartbeat-dot" /> {hostError ? "stale · last host snapshot" : "live · VM agent"}</div><a className="icon-button" title="Email infrastructure support" aria-label="Email infrastructure support" href="mailto:infrastructure@tmp-inc.uk"><CircleHelp size={17} /></a><button className="icon-button" title="Sign out" onClick={() => supabase?.auth.signOut()}><LogOut size={17} /></button></div></header>
-      <div className="content-scroll">{nav === "settings" ? <SettingsPanel settings={settings} viewDistance={settingsViewDistance} setViewDistance={setSettingsViewDistance} simulationDistance={settingsSimulationDistance} setSimulationDistance={setSettingsSimulationDistance} maxPlayers={settingsMaxPlayers} setMaxPlayers={setSettingsMaxPlayers} busy={settingsBusy} error={settingsError} onSaveMinecraft={saveMinecraftSettings} onBackup={backupFromSettings} onRefresh={loadSettings} /> : nav === "cloud" ? <CloudPanel files={cloudFiles} folders={cloudFolders} usedBytes={cloudUsedBytes} busy={cloudBusy} error={cloudError} uploadProgress={cloudUploadProgress} uploadStatus={cloudUploadStatus} onUpload={uploadCloudFiles} onCreateFolder={createCloudFolder} onBackup={backupMinecraft} onDownload={downloadCloudFile} onDelete={deleteCloudFile} /> : nav === "websites" ? <><WebsitesPanel sites={websites} busy={websiteBusy} error={websiteError} name={websiteName} setName={setWebsiteName} domain={websiteDomain} setDomain={setWebsiteDomain} onCreate={createWebsite} onDeploy={deployWebsite} onLifecycle={websiteLifecycle} onDelete={deleteWebsite} /><ExternalSitesPanel sites={manualServices.filter(site => site.manual && site.kind === "Web app")} onStatusChange={updateManualState} onDelete={deleteManualService} onAdd={() => { setNewService(current => ({ ...current, kind: "Web app" })); setDrawer("add"); }} /></> : nav === "plugins" ? <PluginsPanel plugins={plugins} busy={pluginBusy} error={pluginError} owner={isOwnerSession(session)} onUpload={uploadPlugin} onDelete={deletePlugin} onRestart={() => void controlMinecraft("restart")} onRefresh={() => void refreshPlugins()} /> : nav === "diagnostics" ? <DiagnosticsPanel hostState={hostState} settings={settings} error={[settingsError, hostError].filter(Boolean).join(" · ")} onRefresh={loadSettings} busy={settingsBusy} /> : nav === "admin" ? <AdminPanel settings={settings} busy={settingsBusy} error={settingsError} isOwner={isOwnerSession(session)} onRefresh={loadSettings} onBackup={backupFromSettings} onConsole={() => setDrawer("console")} onNavigate={setNav} /> : nav === "logs" ? <LogsPanel logs={logs} error={logError} filter={logFilter} onFilter={setLogFilter} onRefresh={() => void loadLogs()} /> : nav === "alerts" ? <AlertsPanel hostState={hostState} settings={settings} onNavigate={setNav} /> : <><section className="page-heading"><div><p className="eyebrow">CONTROL PLANE / PRIVATE HOST</p><h1>{nav === "overview" ? "Overview" : nav === "services" ? "Services" : "Node telemetry"}</h1><p className="page-subtitle">Latest host snapshot from the authenticated TMP host agent.{staticPages && <><br /><span>GitHub Pages shell · commands run on the authenticated VM agent</span></>}</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setDrawer("console")}><TerminalSquare size={15} /> Minecraft terminal</button><button className="button secondary" onClick={() => window.location.reload()}><RefreshCw size={15} /> Refresh</button>{staticPages && <span className="backend-note">{hostError ? "Stale snapshot" : "Live agent connected"}</span>}{isOwnerSession(session) && <button className="button primary" onClick={() => setDrawer("add")}><Plus size={16} /> Add service or site</button>}</div></section>
+      <div className="content-scroll">{nav === "settings" ? <SettingsPanel settings={settings} viewDistance={settingsViewDistance} setViewDistance={setSettingsViewDistance} simulationDistance={settingsSimulationDistance} setSimulationDistance={setSettingsSimulationDistance} maxPlayers={settingsMaxPlayers} setMaxPlayers={setSettingsMaxPlayers} busy={settingsBusy} error={settingsError} onSaveMinecraft={saveMinecraftSettings} onBackup={backupFromSettings} onRefresh={loadSettings} /> : nav === "cloud" ? <CloudPanel files={cloudFiles} folders={cloudFolders} usedBytes={cloudUsedBytes} busy={cloudBusy} error={cloudError} storageAvailable={cloudStorageAvailable} uploadProgress={cloudUploadProgress} uploadStatus={cloudUploadStatus} onUpload={uploadCloudFiles} onCreateFolder={createCloudFolder} onBackup={backupMinecraft} onDownload={downloadCloudFile} onDelete={deleteCloudFile} /> : nav === "websites" ? <><WebsitesPanel sites={websites} busy={websiteBusy} error={websiteError} name={websiteName} setName={setWebsiteName} domain={websiteDomain} setDomain={setWebsiteDomain} onCreate={createWebsite} onDeploy={deployWebsite} onLifecycle={websiteLifecycle} onDelete={deleteWebsite} /><ExternalSitesPanel sites={manualServices.filter(site => site.manual && site.kind === "Web app")} onStatusChange={updateManualState} onDelete={deleteManualService} onAdd={() => { setNewService(current => ({ ...current, kind: "Web app" })); setDrawer("add"); }} /></> : nav === "plugins" ? <PluginsPanel plugins={plugins} busy={pluginBusy} error={pluginError} owner={isOwnerSession(session)} onUpload={uploadPlugin} onDelete={deletePlugin} onRestart={() => void controlMinecraft("restart")} onRefresh={() => void refreshPlugins()} /> : nav === "diagnostics" ? <DiagnosticsPanel hostState={hostState} settings={settings} error={[settingsError, hostError].filter(Boolean).join(" · ")} onRefresh={loadSettings} busy={settingsBusy} /> : nav === "admin" ? <AdminPanel settings={settings} busy={settingsBusy} error={settingsError} isOwner={isOwnerSession(session)} onRefresh={loadSettings} onBackup={backupFromSettings} onConsole={() => setDrawer("console")} onNavigate={setNav} /> : nav === "logs" ? <LogsPanel logs={logs} error={logError} filter={logFilter} onFilter={setLogFilter} onRefresh={() => void loadLogs()} /> : nav === "alerts" ? <AlertsPanel hostState={hostState} settings={settings} onNavigate={setNav} /> : <><section className="page-heading"><div><p className="eyebrow">CONTROL PLANE / PRIVATE HOST</p><h1>{nav === "overview" ? "Overview" : nav === "services" ? "Services" : "Node telemetry"}</h1><p className="page-subtitle">Latest host snapshot from the authenticated TMP host agent.{staticPages && <><br /><span>GitHub Pages shell · commands run on the authenticated VM agent</span></>}</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setDrawer("console")}><TerminalSquare size={15} /> Minecraft terminal</button><button className="button secondary" onClick={() => window.location.reload()}><RefreshCw size={15} /> Refresh</button>{staticPages && <span className="backend-note">{hostError ? "Stale snapshot" : "Live agent connected"}</span>}{isOwnerSession(session) && <button className="button primary" onClick={() => setDrawer("add")}><Plus size={16} /> Add service or site</button>}</div></section>
         <div className="security-strip"><ShieldCheck size={15} /><span><b>Owner access active</b> · Supabase session verified against the configured allowlist</span><span className="strip-end">{hostError ? "host agent unreachable · displayed metrics are from the last successful poll" : "authenticated VM agent connected · commands are sent via protected RCON"}</span></div>{hostError && <div className="alert-item" role="alert"><span className="alert-icon warning"><AlertTriangle size={15} /></span><div><b>Host snapshot is stale</b><p>Showing the last successful poll. Host-connected actions may fail until the API connection recovers. {hostError}</p></div></div>}{settingsError && <div className="alert-item" role="alert"><span className="alert-icon warning"><AlertTriangle size={15} /></span><div><b>Admin telemetry snapshot is stale</b><p>External HDD, Docker, firewall, and systemd details are from the last successful admin poll. {settingsError}</p></div></div>}
         <section className="metric-grid"><MetricCard label="LIVE SERVICES" value={`${running}`} suffix={` / ${services.length}`} detail={`${degraded} degraded`} tone="cyan" icon={ActivityIcon} /><MetricCard label="ONLINE PLAYERS" value={`${hostState.minecraft.onlinePlayers}`} suffix={` / ${hostState.minecraft.maxPlayers || "—"}`} detail="Live RCON count" icon={Users} /><MetricCard label="MEMORY" value={`${hostState.memory.usedPercent}`} suffix="%" detail={`${formatBytes(hostState.memory.totalBytes - hostState.memory.availableBytes)} used · ${formatBytes(hostState.memory.totalBytes)} total`} tone="violet" icon={MemoryStick}><div className="meter"><span style={{ width: `${hostState.memory.usedPercent}%` }} /></div></MetricCard><MetricCard label={settings?.admin.externalStorage?.mounted ? "EXTERNAL HDD" : "SYSTEM STORAGE"} value={`${settings?.admin.externalStorage?.mounted ? settings.admin.externalStorage.usedPercent : hostState.disk.usedPercent}`} suffix="%" detail={`${formatBytes(settings?.admin.externalStorage?.mounted ? settings.admin.externalStorage.freeBytes : hostState.disk.freeBytes)} free · ${settings?.admin.externalStorage?.mounted ? "external HDD" : "root disk"}`} tone="amber" icon={HardDrive}><div className="meter amber"><span style={{ width: `${settings?.admin.externalStorage?.mounted ? settings.admin.externalStorage.usedPercent : hostState.disk.usedPercent}%` }} /></div></MetricCard></section>
         <section className="main-grid"><div className="panel service-panel"><div className="panel-header"><div><p className="eyebrow">SERVICE REGISTRY</p><h2>Running services <span>{visibleServices.length} visible</span></h2></div><div className="panel-tools"><div className="search-input"><Search size={14} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Filter services" /></div></div></div><div className="table-wrap"><table><thead><tr><th>SERVICE</th><th>STATE</th><th>HEALTH</th><th>CPU</th><th>MEMORY</th><th>UPTIME</th><th /></tr></thead><tbody>{visibleServices.map(service => <tr key={service.id} className={selected?.id === service.id ? "selected-row" : ""} onClick={() => { setSelected(service); setDrawer("service"); }}><td><div className="service-name"><ServiceIcon kind={service.kind} /><span><b>{service.name}</b><small>{service.manual ? "Manual · browser only · " : service.domain ? `${service.domain} · ` : ""}{service.description}</small></span></div></td><td><StateBadge state={service.state} /></td><td><div className="health-cell">{service.health === null ? <small>Not reported</small> : <><span className="health-bar"><i className={service.health < 80 ? "warning" : ""} style={{ width: `${service.health}%` }} /></span><small>{service.health}%</small></>}</div></td><td className="mono">{service.cpu < 0 ? "—" : `${service.cpu}%`}</td><td><div className="memory-cell"><span>{service.memory < 0 ? "—" : `${service.memory}%`}</span><span className="memory-bar"><i style={{ width: `${Math.max(0, service.memory)}%` }} /></span></div></td><td className="mono muted">{service.uptime}</td><td><button className="row-menu" onClick={event => { event.stopPropagation(); setSelected(service); setDrawer("service"); }}><MoreHorizontal size={16} /></button></td></tr>)}</tbody></table></div><div className="panel-footer"><span><span className="green-dot" /> {running} running</span><span><span className="amber-dot" /> {degraded} attention</span><button className="text-button" onClick={() => setNav("services")}>Open full registry <ArrowUpRight size={14} /></button></div></div>

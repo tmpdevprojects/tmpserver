@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT=/opt/tmpserver/minecraft
+DATA="$ROOT/data"
+HDD_MOUNT=/mnt/tmpserver-hdd
+HDD_CLOUD="$HDD_MOUNT/tmpserver-cloud"
+CLOUD=/opt/tmpserver/cloud
+HDD_UUID=7A404FAD470CB2A3
+BACKUP="$CLOUD/minecraft-latest.tar.gz"
+
+fail() {
+  printf 'Minecraft backup refused: %s\n' "$1" >&2
+  exit 1
+}
+
+verify_cloud_mount() {
+  local hdd_row hdd_target hdd_source hdd_fstype hdd_device cloud_row cloud_target cloud_source cloud_fstype cloud_device source_device actual_uuid hdd_identity cloud_identity
+
+  hdd_row="$(findmnt -rn -M "$HDD_MOUNT" -o TARGET,SOURCE,FSTYPE,MAJ:MIN 2>/dev/null || true)"
+  [[ -n "$hdd_row" ]] || fail "the required HDD is not mounted at $HDD_MOUNT."
+  read -r hdd_target hdd_source hdd_fstype hdd_device <<<"$hdd_row"
+  [[ "$hdd_target" == "$HDD_MOUNT" && "$hdd_fstype" != autofs ]] || fail "the HDD mount is only an automount placeholder or is at the wrong path."
+
+  source_device="${hdd_source%%\[*}"
+  [[ "$source_device" == /dev/* ]] || fail "the HDD mount is not backed by a block device."
+  actual_uuid="$(blkid -s UUID -o value "$source_device" 2>/dev/null | tr -d '\r\n' | tr '[:lower:]' '[:upper:]' || true)"
+  [[ "$actual_uuid" == "$HDD_UUID" ]] || fail "mounted device UUID '$actual_uuid' does not match expected UUID $HDD_UUID."
+
+  cloud_row="$(findmnt -rn -M "$CLOUD" -o TARGET,SOURCE,FSTYPE,MAJ:MIN 2>/dev/null || true)"
+  [[ -n "$cloud_row" ]] || fail "$CLOUD is not an active mount; the system-disk directory will not be used."
+  read -r cloud_target cloud_source cloud_fstype cloud_device <<<"$cloud_row"
+  [[ "$cloud_target" == "$CLOUD" && "$cloud_fstype" != autofs ]] || fail "$CLOUD is not mounted at the required exact path."
+  [[ "$cloud_device" == "$hdd_device" ]] || fail "$CLOUD and the expected HDD are not on the same mounted device."
+  [[ -d "$HDD_CLOUD" && -d "$CLOUD" ]] || fail "the existing HDD Cloud directory or its bind target is missing; this script will not create either."
+
+  hdd_identity="$(stat -Lc '%d:%i' "$HDD_CLOUD" 2>/dev/null || true)"
+  cloud_identity="$(stat -Lc '%d:%i' "$CLOUD" 2>/dev/null || true)"
+  [[ -n "$hdd_identity" && "$hdd_identity" == "$cloud_identity" ]] || fail "$CLOUD is not the exact $HDD_CLOUD directory; no fallback is permitted."
+}
+
+if [[ ! -e "/dev/disk/by-uuid/$HDD_UUID" ]]; then
+  fail "external HDD UUID $HDD_UUID is not connected."
+fi
+
+for unit in mnt-tmpserver-hdd.mount opt-tmpserver-cloud.mount; do
+  state="$(systemctl show "$unit" --property=ActiveState --value 2>/dev/null || true)"
+  if [[ "$state" == failed ]]; then
+    systemctl reset-failed "$unit" || true
+  fi
+done
+systemctl start mnt-tmpserver-hdd.mount || fail "systemd could not mount $HDD_MOUNT."
+verify_cloud_mount
+systemctl start opt-tmpserver-cloud.mount || fail "systemd could not activate the Cloud bind mount."
+verify_cloud_mount
+
+[[ -d "$DATA" ]] || fail "Minecraft data directory is missing: $DATA."
+[[ -d "$CLOUD" ]] || fail "verified Cloud mount disappeared before backup."
+
+running="$(docker inspect --format '{{.State.Running}}' tmpserver-minecraft 2>/dev/null || true)"
+if [[ "$running" == true ]]; then
+  docker exec tmpserver-minecraft rcon-cli save-all flush || fail "Minecraft save-all flush failed; no backup was written."
+fi
+
+verify_cloud_mount
+TMP="$(mktemp "$CLOUD/.minecraft-latest.XXXXXX.tar.gz")"
+trap 'rm -f -- "$TMP"' EXIT
+tar -C "$ROOT" -czf "$TMP" data
+verify_cloud_mount
+chmod 0600 "$TMP"
+mv -f -- "$TMP" "$BACKUP"
+trap - EXIT
+printf 'Verified-HDD backup written: %s\n' "$BACKUP"

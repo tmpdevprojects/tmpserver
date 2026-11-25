@@ -52,10 +52,10 @@ MAX_LOG_TOTAL_BYTES = 256 * 1024
 MINECRAFT_DATA_ROOT = "/opt/tmpserver/minecraft/data"
 MINECRAFT_PLUGINS_ROOT = os.path.join(MINECRAFT_DATA_ROOT, "plugins")
 EXTERNAL_HDD_ROOT = "/mnt/tmpserver-hdd"
+EXTERNAL_HDD_UUID = "7A404FAD470CB2A3"
+EXTERNAL_CLOUD_ROOT = os.path.join(EXTERNAL_HDD_ROOT, "tmpserver-cloud")
 CLOUD_UPLOADS_ROOT = os.path.join(CLOUD_ROOT, ".tmpserver-upload-staging")
-os.makedirs(CLOUD_ROOT, exist_ok=True)
 os.makedirs(WEBSITES_ROOT, exist_ok=True)
-os.makedirs(CLOUD_UPLOADS_ROOT, exist_ok=True)
 
 
 def json_bytes(value):
@@ -65,6 +65,91 @@ def json_bytes(value):
 def run(command, timeout=15):
     result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
+
+
+def mount_info(path):
+    code, output, _ = run(["findmnt", "-rn", "-T", path, "-o", "TARGET,SOURCE,FSTYPE,MAJ:MIN"], timeout=5)
+    if code != 0:
+        return None
+    for line in reversed(output.splitlines()):
+        fields = line.split()
+        if len(fields) >= 4:
+            return {"target": fields[0], "source": fields[1], "filesystem": fields[2], "device": fields[3]}
+    return None
+
+
+def cloud_storage_status():
+    status = {
+        "available": False,
+        "hddMounted": False,
+        "cloudMounted": False,
+        "cloudOnExternal": False,
+        "mount": CLOUD_ROOT,
+        "hddMount": EXTERNAL_HDD_ROOT,
+        "expectedHddUuid": EXTERNAL_HDD_UUID,
+        "message": "Cloud storage is unavailable; no system-disk fallback is permitted.",
+    }
+    hdd = mount_info(EXTERNAL_HDD_ROOT)
+    if not hdd or hdd["target"] != EXTERNAL_HDD_ROOT or hdd["filesystem"] == "autofs":
+        status["message"] = f"The required external HDD is not mounted at {EXTERNAL_HDD_ROOT}; Cloud access is blocked and the system disk will not be used."
+        return status
+    source = hdd["source"].split("[", 1)[0]
+    if not source.startswith("/dev/"):
+        status["message"] = "The mounted path is not backed by a block device; Cloud access is blocked."
+        return status
+    uuid_code, uuid, _ = run(["blkid", "-s", "UUID", "-o", "value", source], timeout=5)
+    if uuid_code != 0 or uuid.upper() != EXTERNAL_HDD_UUID:
+        status["message"] = f"The mounted device at {EXTERNAL_HDD_ROOT} does not match the configured HDD UUID; Cloud access is blocked."
+        return status
+    status["hddMounted"] = True
+
+    cloud = mount_info(CLOUD_ROOT)
+    if not cloud or cloud["target"] != CLOUD_ROOT or cloud["filesystem"] == "autofs":
+        status["message"] = f"The HDD is mounted, but its Cloud directory is not bound at {CLOUD_ROOT}; Cloud access is blocked."
+        return status
+    status["cloudMounted"] = True
+    try:
+        source_stat = os.stat(EXTERNAL_CLOUD_ROOT)
+        cloud_stat = os.stat(CLOUD_ROOT)
+    except OSError:
+        status["message"] = "The expected Cloud directory on the external HDD is unavailable; Cloud access is blocked."
+        return status
+    if source_stat.st_dev != cloud_stat.st_dev or source_stat.st_ino != cloud_stat.st_ino or hdd["device"] != cloud["device"]:
+        status["message"] = "The Cloud path is not the configured directory on the expected external HDD; Cloud access is blocked."
+        return status
+
+    status.update({"available": True, "cloudOnExternal": True, "message": "Cloud storage is mounted on the configured external HDD."})
+    return status
+
+
+def ensure_cloud_storage():
+    status = cloud_storage_status()
+    if status["available"]:
+        return status
+    device_link = f"/dev/disk/by-uuid/{EXTERNAL_HDD_UUID}"
+    if not os.path.exists(device_link):
+        status["message"] = f"The required external HDD {EXTERNAL_HDD_UUID} is not connected; Cloud and backup operations are blocked, with no system-disk fallback."
+        return status
+
+    for unit in ("mnt-tmpserver-hdd.mount", "opt-tmpserver-cloud.mount"):
+        state_code, state, _ = run(["systemctl", "show", unit, "--property=ActiveState", "--value"], timeout=5)
+        if state_code == 0 and state == "failed":
+            run(["systemctl", "reset-failed", unit], timeout=5)
+
+    code, stdout, stderr = run(["systemctl", "start", "mnt-tmpserver-hdd.mount"], timeout=30)
+    if code != 0:
+        status["message"] = f"The external HDD could not be mounted; Cloud access is blocked. {stderr[-240:] or stdout[-240:]}"
+        return status
+    status = cloud_storage_status()
+    if not status["hddMounted"]:
+        return status
+
+    code, stdout, stderr = run(["systemctl", "start", "opt-tmpserver-cloud.mount"], timeout=30)
+    if code != 0:
+        status = cloud_storage_status()
+        status["message"] = f"The HDD is connected, but its Cloud bind mount could not be activated; Cloud access is blocked. {stderr[-240:] or stdout[-240:]}"
+        return status
+    return cloud_storage_status()
 
 
 def run_bounded_stdout(command, timeout=15, max_bytes=MAX_LOG_CONTAINER_BYTES):
@@ -591,19 +676,16 @@ def admin_snapshot():
             row["mounted"] = False
         return row
 
-    external_mounted = os.path.ismount(EXTERNAL_HDD_ROOT)
+    cloud_status = cloud_storage_status()
+    external_mounted = cloud_status["hddMounted"]
     root_storage = storage_row("/", "System disk", "system")
-    cloud_storage = storage_row(CLOUD_ROOT, "Cloud files and Minecraft rolling backup", "cloud")
+    cloud_storage = storage_row(CLOUD_ROOT, "Cloud files and Minecraft rolling backup", "cloud", cloud_status["available"])
     website_storage = storage_row(WEBSITES_ROOT, "Website deployments", "websites")
     external = storage_row(EXTERNAL_HDD_ROOT, "External HDD · Cloud and backups", "external", external_mounted)
-    cloud_on_external = False
-    if external_mounted:
-        try:
-            cloud_on_external = os.stat(CLOUD_ROOT).st_dev == os.stat(EXTERNAL_HDD_ROOT).st_dev
-        except OSError:
-            cloud_on_external = False
     external.update({
-        "cloudOnExternal": cloud_on_external,
+        "cloudOnExternal": cloud_status["cloudOnExternal"],
+        "cloudStorageAvailable": cloud_status["available"],
+        "cloudStorageMessage": cloud_status["message"],
         "cloudPath": CLOUD_ROOT,
         "systemBackupPath": os.path.join(EXTERNAL_HDD_ROOT, "tmpserver-restic"),
         "systemBackupDirectoryPresent": bool(external_mounted and os.path.isdir(os.path.join(EXTERNAL_HDD_ROOT, "tmpserver-restic"))),
@@ -712,8 +794,15 @@ class Handler(BaseHTTPRequestHandler):
             if not auth_user(self):
                 self.send_json(401, {"error": "authenticated owner session required"})
                 return
-            files = cloud_files()
-            self.send_json(200, {"files": files, "folders": cloud_directories(), "usedBytes": sum(item["size"] for item in files)})
+            storage = ensure_cloud_storage()
+            if not storage["available"]:
+                self.send_json(503, {"error": storage["message"], "storage": storage})
+                return
+            try:
+                files = cloud_files()
+                self.send_json(200, {"files": files, "folders": cloud_directories(), "usedBytes": sum(item["size"] for item in files), "storage": storage})
+            except OSError as error:
+                self.send_json(503, {"error": f"Cloud storage became unavailable; no system-disk fallback was used. {error}", "storage": cloud_storage_status()})
             return
         if self.path == "/api/websites":
             if not auth_user(self):
@@ -724,6 +813,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/cloud/download":
             if not auth_user(self):
                 self.send_json(401, {"error": "authenticated owner session required"})
+                return
+            storage = ensure_cloud_storage()
+            if not storage["available"]:
+                self.send_json(503, {"error": storage["message"], "storage": storage})
                 return
             path = safe_cloud_path(parse_qs(parsed.query).get("path", [""])[0])
             if not path or not os.path.isfile(path):
@@ -742,9 +835,12 @@ class Handler(BaseHTTPRequestHandler):
             if not user:
                 self.send_json(401, {"error": "authenticated owner session required"})
                 return
+            ensure_cloud_storage()
+            admin = admin_snapshot()
             backup_path = os.path.join(CLOUD_ROOT, "minecraft-latest.tar.gz")
-            backup_stat = os.stat(backup_path) if os.path.isfile(backup_path) else None
-            self.send_json(200, {"host": host_state()["host"], "minecraft": minecraft_settings(), "agent": {"status": "connected", "uptimeSeconds": round(time.time() - STARTED)}, "backup": {"present": bool(backup_stat), "bytes": backup_stat.st_size if backup_stat else 0, "modified": int(backup_stat.st_mtime) if backup_stat else 0}, "permissions": {"owner": owner_user(user)}, "admin": admin_snapshot()})
+            cloud_available = bool(admin["externalStorage"].get("cloudStorageAvailable"))
+            backup_stat = os.stat(backup_path) if cloud_available and os.path.isfile(backup_path) else None
+            self.send_json(200, {"host": host_state()["host"], "minecraft": minecraft_settings(), "agent": {"status": "connected", "uptimeSeconds": round(time.time() - STARTED)}, "backup": {"present": bool(backup_stat), "bytes": backup_stat.st_size if backup_stat else 0, "modified": int(backup_stat.st_mtime) if backup_stat else 0}, "permissions": {"owner": owner_user(user)}, "admin": admin})
             return
         self.send_json(404, {"error": "not found"})
 
@@ -821,6 +917,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(401, {"error": "authenticated owner session required"})
                 return
             try:
+                storage = ensure_cloud_storage()
+                if not storage["available"]:
+                    self.send_json(503, {"error": storage["message"], "storage": storage})
+                    return
                 length = int(self.headers.get("Content-Length", "0"))
                 if parsed.path == "/api/cloud/folder":
                     if not 0 <= length <= 4096:
@@ -936,6 +1036,10 @@ class Handler(BaseHTTPRequestHandler):
             user = auth_user(self)
             if not owner_user(user):
                 self.send_json(403, {"error": "Only the configured TMP Server owner can change Minecraft settings."})
+                return
+            storage = ensure_cloud_storage()
+            if not storage["available"]:
+                self.send_json(503, {"error": f"Minecraft settings were not changed because a verified external-HDD backup destination is unavailable. {storage['message']}", "storage": storage})
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
@@ -1082,6 +1186,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(400, {"error": "invalid JSON"})
             return
         if self.path == "/api/minecraft/backup":
+            storage = ensure_cloud_storage()
+            if not storage["available"]:
+                self.send_json(503, {"error": storage["message"], "storage": storage})
+                return
             code, stdout, stderr = run([BACKUP_SCRIPT], timeout=240)
             if code != 0:
                 self.send_json(502, {"error": "Minecraft backup failed", "detail": stderr[-300:] or stdout[-300:]})
@@ -1114,6 +1222,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "action must be start, stop, restart, or update"})
                 return
             if lifecycle in {"stop", "restart", "update"}:
+                storage = ensure_cloud_storage()
+                if not storage["available"]:
+                    self.send_json(503, {"error": f"Minecraft {lifecycle} was not run because a verified external-HDD backup destination is unavailable. {storage['message']}", "storage": storage})
+                    return
                 backup_code, backup_stdout, backup_stderr = run([BACKUP_SCRIPT], timeout=240)
                 if backup_code != 0:
                     self.send_json(502, {"error": "Minecraft backup failed; lifecycle action was not run", "detail": backup_stderr[-300:] or backup_stdout[-300:]})
