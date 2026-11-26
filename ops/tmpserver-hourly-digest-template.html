@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>TMP Server Status Pulse</title>
+  <style>
+    @media screen and (max-width: 640px) {
+      .wrap { width: 100% !important; }
+      .pad { padding-left: 16px !important; padding-right: 16px !important; }
+      .metric { display: block !important; width: 100% !important; padding: 6px 0 !important; }
+      .stack { display: block !important; width: 100% !important; }
+      .hide-mobile { display: none !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:#eef2f6;color:#172334;font-family:Arial,Helvetica,sans-serif;">
+  <!--
+    Standalone layout template only. The existing host digest sender does not load this file yet.
+    Replace {{...}} tokens in a future adapter; HTML-escape all values. Only the *_ROWS_HTML
+    tokens may contain generated markup, and their row/cell values must also be escaped.
+  -->
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#eef2f6;">
+    <tr><td align="center" style="padding:24px 10px;">
+      <table role="presentation" class="wrap" width="700" cellspacing="0" cellpadding="0" border="0" style="width:700px;max-width:700px;background:#ffffff;border:1px solid #dbe3ec;border-radius:12px;overflow:hidden;">
+        <tr>
+          <td class="pad" style="padding:24px 30px;background:#101a28;color:#ffffff;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td>
+                  <div style="font-size:11px;font-weight:700;letter-spacing:2px;color:#9bb1c8;">TMP SERVER &nbsp; / &nbsp; PRIVATE HOST</div>
+                  <div style="margin-top:8px;font-size:26px;line-height:1.2;font-weight:700;">System status pulse</div>
+                  <div style="margin-top:7px;font-size:13px;color:#c1cedb;">{{GENERATED_AT}} &nbsp;·&nbsp; {{HOSTNAME}}</div>
+                </td>
+                <td align="right" valign="top" class="hide-mobile">
+                  <span style="display:inline-block;padding:8px 12px;border:1px solid #52677f;border-radius:20px;color:#d8e6f4;font-size:12px;font-weight:700;">{{OVERALL_STATUS}}</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td class="pad" style="padding:20px 30px 8px;">
+            <div style="font-size:15px;line-height:1.55;color:#314256;">{{STATUS_SUMMARY}}</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="pad" style="padding:12px 24px 18px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+              <tr>
+                <td class="metric" width="25%" style="padding:6px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f8fb;border:1px solid #e2e9f0;border-radius:8px;"><tr><td style="padding:13px;">
+                    <div style="font-size:10px;letter-spacing:1px;color:#6b7c90;font-weight:700;">CPU</div><div style="padding-top:6px;font-size:19px;font-weight:700;color:#172334;">{{CPU_STATUS}}</div>
+                  </td></tr></table>
+                </td>
+                <td class="metric" width="25%" style="padding:6px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f8fb;border:1px solid #e2e9f0;border-radius:8px;"><tr><td style="padding:13px;">
+                    <div style="font-size:10px;letter-spacing:1px;color:#6b7c90;font-weight:700;">MEMORY</div><div style="padding-top:6px;font-size:19px;font-weight:700;color:#172334;">{{MEMORY_STATUS}}</div>
+                  </td></tr></table>
+                </td>
+                <td class="metric" width="25%" style="padding:6px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f8fb;border:1px solid #e2e9f0;border-radius:8px;"><tr><td style="padding:13px;">
+                    <div style="font-size:10px;letter-spacing:1px;color:#6b7c90;font-weight:700;">SYSTEM DISK</div><div style="padding-top:6px;font-size:19px;font-weight:700;color:#172334;">{{ROOT_DISK_STATUS}}</div>
+                  </td></tr></table>
+                </td>
+                <td class="metric" width="25%" style="padding:6px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f8fb;border:1px solid #e2e9f0;border-radius:8px;"><tr><td style="padding:13px;">
+                    <div style="font-size:10px;letter-spacing:1px;color:#6b7c90;font-weight:700;">UPTIME</div><div style="padding-top:6px;font-size:19px;font-weight:700;color:#172334;">{{UPTIME}}</div>
+                  </td></tr></table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td class="pad" style="padding:0 30px 16px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e2e9f0;border-radius:8px;">
+              <tr><td colspan="2" style="padding:14px 16px;border-bottom:1px solid #e2e9f0;background:#f8fafc;font-size:13px;font-weight:700;color:#172334;">HOST & OPERATING SYSTEM</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;border-bottom:1px solid #edf1f5;">OS label</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;border-bottom:1px solid #edf1f5;">TMP x Triumphant OS v27.13.0</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;border-bottom:1px solid #edf1f5;">Host agent</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;border-bottom:1px solid #edf1f5;">{{HOST_AGENT_STATUS}}</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;">System architecture</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;">{{ARCHITECTURE}}</td></tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td class="pad" style="padding:0 30px 16px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e2e9f0;border-radius:8px;">
+              <tr><td colspan="2" style="padding:14px 16px;border-bottom:1px solid #e2e9f0;background:#f8fafc;font-size:13px;font-weight:700;color:#172334;">MINECRAFT</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;border-bottom:1px solid #edf1f5;">Paper status / version</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;border-bottom:1px solid #edf1f5;">{{MINECRAFT_STATUS}} &nbsp;·&nbsp; {{PAPER_VERSION}}</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;border-bottom:1px solid #edf1f5;">Players</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;border-bottom:1px solid #edf1f5;">{{PLAYER_COUNT}}</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;border-bottom:1px solid #edf1f5;">Java</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;border-bottom:1px solid #edf1f5;">{{JAVA_ENDPOINT}}</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;">Bedrock</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;">play.tmpserver.com &nbsp;·&nbsp; UDP/TCP 19132: {{BEDROCK_PORT_STATUS}}</td></tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td class="pad" style="padding:0 30px 16px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e2e9f0;border-radius:8px;">
+              <tr><td colspan="2" style="padding:14px 16px;border-bottom:1px solid #e2e9f0;background:#f8fafc;font-size:13px;font-weight:700;color:#172334;">CLOUD STORAGE & EXTERNAL HDD</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;border-bottom:1px solid #edf1f5;">Verified HDD mount</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;border-bottom:1px solid #edf1f5;">{{HDD_MOUNT_STATUS}}</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;border-bottom:1px solid #edf1f5;">Cloud capacity</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;border-bottom:1px solid #edf1f5;">{{CLOUD_CAPACITY}}</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;border-bottom:1px solid #edf1f5;">Latest Minecraft backup</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;border-bottom:1px solid #edf1f5;">{{LATEST_BACKUP}}</td></tr>
+              <tr><td style="padding:11px 16px;color:#68798d;font-size:12px;">Backup verification</td><td align="right" style="padding:11px 16px;color:#26384b;font-size:12px;font-weight:700;">{{BACKUP_VERIFICATION}}</td></tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td class="pad" style="padding:0 30px 16px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e2e9f0;border-radius:8px;">
+              <tr><td style="padding:14px 16px;border-bottom:1px solid #e2e9f0;background:#f8fafc;font-size:13px;font-weight:700;color:#172334;">SERVICES & SITES</td></tr>
+              <tr><td style="padding:0 16px 12px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr><th align="left" style="padding:10px 4px;border-bottom:1px solid #e2e9f0;color:#728196;font-size:10px;letter-spacing:.7px;">SERVICE</th><th align="left" style="padding:10px 4px;border-bottom:1px solid #e2e9f0;color:#728196;font-size:10px;letter-spacing:.7px;">STATE</th><th align="left" style="padding:10px 4px;border-bottom:1px solid #e2e9f0;color:#728196;font-size:10px;letter-spacing:.7px;">DETAIL</th></tr>
+                  {{SERVICE_ROWS_HTML}}
+                </table>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td class="pad" style="padding:0 30px 20px;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e2e9f0;border-radius:8px;">
+              <tr><td style="padding:14px 16px;border-bottom:1px solid #e2e9f0;background:#f8fafc;font-size:13px;font-weight:700;color:#172334;">ALERTS & NOTES</td></tr>
+              <tr><td style="padding:14px 16px;color:#34465a;font-size:12px;line-height:1.6;">{{ALERTS_HTML}}</td></tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td class="pad" style="padding:18px 30px;background:#f5f8fb;border-top:1px solid #e2e9f0;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+              <td class="stack" style="font-size:11px;line-height:1.6;color:#718095;">Private operational report for the TMP Server owner.<br>Generated automatically; values reflect the latest available host snapshot.</td>
+              <td class="stack" align="right" style="padding-top:8px;"><a href="https://tmpserver.com" style="display:inline-block;padding:10px 14px;border-radius:6px;background:#126c85;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700;">Open TMP Server dashboard</a></td>
+            </tr></table>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
