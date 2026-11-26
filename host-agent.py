@@ -303,6 +303,11 @@ class GmailProviderError(Exception):
     pass
 
 
+def gmail_diagnostic(event):
+    # Fixed event labels only: never include authorization codes, tokens, headers, or mailbox data.
+    print(f"tmpserver-gmail: {event}", flush=True)
+
+
 def gmail_config():
     client_id = os.environ.get("GMAIL_CLIENT_ID", "").strip()
     client_secret = os.environ.get("GMAIL_CLIENT_SECRET", "").strip()
@@ -1008,6 +1013,8 @@ class Handler(BaseHTTPRequestHandler):
         return origin if origin in ALLOWED_ORIGINS else "https://tmpserver.com"
 
     def do_OPTIONS(self):
+        if urlparse(self.path).path == "/api/gmail/oauth/exchange":
+            gmail_diagnostic("exchange preflight received")
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", self.cors_origin())
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With")
@@ -1146,16 +1153,24 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         gmail_routes = {"/api/gmail/oauth/exchange", "/api/gmail/access-token", "/api/gmail/disconnect"}
         if parsed.path in gmail_routes:
+            is_exchange = parsed.path == "/api/gmail/oauth/exchange"
+            if is_exchange:
+                gmail_diagnostic("exchange POST received")
             user = auth_user(self)
             if not user or not owner_user(user):
+                if is_exchange:
+                    gmail_diagnostic("exchange rejected: owner session")
                 self.send_json(401, {"error": "authenticated owner session required"})
                 return
             origin = self.headers.get("Origin", "")
             if origin != origin.rstrip("/") or origin not in ALLOWED_ORIGINS:
+                if is_exchange:
+                    gmail_diagnostic("exchange rejected: origin")
                 self.send_json(403, {"error": "Request origin is not allowed."})
                 return
             if parsed.path == "/api/gmail/oauth/exchange":
                 if self.headers.get("X-Requested-With") != "XmlHttpRequest":
+                    gmail_diagnostic("exchange rejected: request header")
                     self.send_json(400, {"error": "Gmail authorization request is invalid."})
                     return
                 content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -1164,6 +1179,7 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     length = -1
                 if content_type != "application/json" or not 1 <= length <= 4096:
+                    gmail_diagnostic("exchange rejected: request size or content type")
                     self.send_json(400 if length <= 4096 else 413, {"error": "Gmail authorization request must be a small JSON object."})
                     return
                 try:
@@ -1172,30 +1188,38 @@ class Handler(BaseHTTPRequestHandler):
                     if len(raw) != length or not isinstance(payload, dict) or set(payload) != {"code", "redirectUri"}:
                         raise ValueError
                 except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+                    gmail_diagnostic("exchange rejected: request body")
                     self.send_json(400, {"error": "Gmail authorization request is invalid."})
                     return
                 code = payload.get("code")
                 redirect_uri = payload.get("redirectUri")
                 if (not isinstance(code, str) or not code or len(code) > 3000
                         or not isinstance(redirect_uri, str) or redirect_uri != origin):
+                    gmail_diagnostic("exchange rejected: request fields")
                     self.send_json(400, {"error": "Gmail authorization request is invalid."})
                     return
                 config = gmail_config()
                 if not config:
+                    gmail_diagnostic("exchange failed: OAuth host configuration")
                     self.send_json(503, {"error": "Gmail OAuth is not configured on this host."})
                     return
                 try:
+                    gmail_diagnostic("exchange contacting Google")
                     refresh_token, email, scopes = gmail_exchange_code(code, redirect_uri, config)
                     if email.strip().casefold() != str(user.get("email", "")).strip().casefold():
+                        gmail_diagnostic("exchange rejected: mailbox owner mismatch")
                         self.send_json(403, {"error": "The Google account must match the authenticated owner account."})
                         return
                     gmail_write_token(refresh_token, email, scopes)
                 except GmailProviderError:
+                    gmail_diagnostic("exchange failed: Google authorization response")
                     self.send_json(502, {"error": "Google could not verify the Gmail authorization."})
                     return
                 except GmailStorageError:
+                    gmail_diagnostic("exchange failed: secure token storage")
                     self.send_json(503, {"error": "Gmail connection could not be stored securely."})
                     return
+                gmail_diagnostic("exchange succeeded: connection stored")
                 self.send_json(200, {"connected": True, "email": email})
                 return
             if parsed.path == "/api/gmail/access-token":
