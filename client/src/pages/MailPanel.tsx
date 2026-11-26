@@ -694,6 +694,7 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
    	  Disconnect
   	</button>
       </div>
+      </div>
 
       <div className="mail-workspace">
         <nav className="mail-nav" aria-label="Mailbox folders">
