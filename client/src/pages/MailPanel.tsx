@@ -67,6 +67,7 @@ type MailMessage = {
   subject: string;
   date: string;
   plainText: string;
+  html: string;
   unread: boolean;
 };
 type MailFolder = "INBOX" | "SENT" | "STARRED";
@@ -168,8 +169,14 @@ function makeMessage(item: GmailMessageResponse): MailMessage {
     subject: headerValue(headers, "Subject") || "(no subject)",
     date: Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toISOString() : "",
     plainText,
+    html: parts.html.join("<br>"),
     unread: item.labelIds?.includes("UNREAD") ?? false,
   };
+}
+
+function emailFrameDoc(html: string): string {
+  const css = "body{margin:0;padding:12px;background:#fff;color:#111;font-family:system-ui,sans-serif;overflow-wrap:anywhere}img{max-width:100%;height:auto}";
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><base target="_blank"><style>${css}</style></head><body>${html}</body></html>`;
 }
 
 function formatDate(value: string, compact = false): string {
@@ -271,6 +278,8 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
   const [activeQuery, setActiveQuery] = useState("");
   const [messages, setMessages] = useState<MailMessage[]>([]);
   const [listLoading, setListLoading] = useState(false);
+  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<MailMessage | null>(null);
   const [composeOpen, setComposeOpen] = useState(false);
   const [recipient, setRecipient] = useState("");
@@ -370,30 +379,44 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
     return response;
   }, [getAccessToken]);
 
-  const loadMessages = useCallback(async (nextFolder = folder, query = activeQuery) => {
+  const loadMessages = useCallback(async (nextFolder = folder, query = activeQuery, pageToken?: string) => {
     if (!status?.connected) return;
-    setListLoading(true);
+    const append = Boolean(pageToken);
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setListLoading(true);
+      setSelected(null);
+      setNextPageToken(null);
+    }
     setError("");
     setNotice("");
-    setSelected(null);
     try {
-      const params = new URLSearchParams({ maxResults: "20", labelIds: nextFolder });
+      const params = new URLSearchParams({ maxResults: "50", labelIds: nextFolder });
       if (query.trim()) params.set("q", query.trim());
+      if (pageToken) params.set("pageToken", pageToken);
       const listResponse = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`);
       if (!listResponse.ok) throw new Error(`Gmail could not load this mailbox view (HTTP ${listResponse.status}). Try refreshing or reconnecting.`);
-      const list = await responseJson<{ messages?: Array<{ id: string }>; resultSizeEstimate?: number }>(listResponse);
-      const ids = (list.messages ?? []).filter(message => typeof message.id === "string").slice(0, 20);
-      const details = await Promise.all(ids.map(async ({ id }) => {
-        const response = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`);
-        if (!response.ok) throw new Error(`A message could not be loaded (HTTP ${response.status}). Refresh to try again.`);
-        return makeMessage(await responseJson<GmailMessageResponse>(response));
-      }));
-      setMessages(details);
+      const list = await responseJson<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(listResponse);
+      const ids = (list.messages ?? []).filter(message => typeof message.id === "string");
+      const details: MailMessage[] = [];
+      for (let i = 0; i < ids.length; i += 10) {
+        const chunk = ids.slice(i, i + 10);
+        const loaded = await Promise.all(chunk.map(async ({ id }) => {
+          const response = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=full`);
+          if (!response.ok) throw new Error(`A message could not be loaded (HTTP ${response.status}). Refresh to try again.`);
+          return makeMessage(await responseJson<GmailMessageResponse>(response));
+        }));
+        details.push(...loaded);
+      }
+      setMessages(current => append ? [...current, ...details] : details);
+      setNextPageToken(list.nextPageToken ?? null);
     } catch (cause) {
-      setMessages([]);
+      if (!append) setMessages([]);
       setError(safeErrorMessage(cause, "Unable to load Gmail messages."));
     } finally {
       setListLoading(false);
+      setLoadingMore(false);
     }
   }, [activeQuery, folder, gmailFetch, status?.connected]);
 
@@ -593,19 +616,19 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
             <div className="mail-reading-toolbar"><button type="button" className="mail-back" onClick={() => setSelected(null)}><ArrowLeft size={15} /> Back to {folder === "INBOX" ? "Inbox" : folder === "SENT" ? "Sent" : "Starred"}</button><span>{formatDate(selected.date)}</span></div>
             <h2 id="mail-reading-subject" className="mail-reading-subject">{selected.subject}</h2>
             <div className="mail-message-meta"><span className="mail-sender-avatar" aria-hidden="true">{selected.sender.charAt(0).toUpperCase()}</span><div><strong>{selected.sender}</strong>{selected.recipient && <small>to {selected.recipient}</small>}</div><time dateTime={selected.date || undefined}>{formatDate(selected.date)}</time></div>
-            <div className="mail-message-body">{selected.plainText ? selected.plainText : <span className="mail-no-body">This message has no readable plain-text content.</span>}</div>
+            {selected.html ? <iframe title="Message content" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={emailFrameDoc(selected.html)} style={{ width: "100%", height: "70vh", border: 0, background: "#fff", borderRadius: 8 }} /> : <div className="mail-message-body">{selected.plainText ? selected.plainText : <span className="mail-no-body">This message has no readable content.</span>}</div>}
           </article> : <>
             <div className="mail-list-toolbar"><div><p className="eyebrow">YOUR MAIL</p><h2>{folder === "INBOX" ? "Inbox" : folder === "SENT" ? "Sent" : "Starred"}</h2></div><form className="mail-search" role="search" onSubmit={submitSearch}><Search size={15} aria-hidden="true" /><input aria-label="Search Gmail" value={searchDraft} onChange={event => setSearchDraft(event.target.value)} placeholder="Search mail" /><button type="submit" aria-label="Submit Gmail search"><ChevronRight size={15} /></button></form><button type="button" className="icon-button mail-reload" title="Refresh messages" aria-label="Refresh messages" disabled={listLoading} onClick={() => void loadMessages(folder, activeQuery)}><RefreshCw size={15} /></button></div>
             {activeQuery && <div className="mail-query-indicator">Search: <strong>{activeQuery}</strong><button type="button" onClick={() => { setSearchDraft(""); setActiveQuery(""); }}>Clear search</button></div>}
             <div className="mail-message-list" aria-live="polite" aria-busy={listLoading}>
               {listLoading ? <div className="mail-empty"><LoaderCircle size={21} className="mail-spin" /><p>Loading messages from Google…</p></div>
-                : error ? <div className="mail-empty"><CircleAlert size={22} /><p>Messages could not be loaded. Review the alert above or retry.</p><button className="button secondary" type="button" onClick={() => void loadMessages(folder, activeQuery)}>Try again</button></div>
+                : error && !messages.length ? <div className="mail-empty"><CircleAlert size={22} /><p>Messages could not be loaded. Review the alert above or retry.</p><button className="button secondary" type="button" onClick={() => void loadMessages(folder, activeQuery)}>Try again</button></div>
                   : messages.length ? messages.map(message => <button className={`mail-message-row ${message.unread ? "unread" : ""}`} type="button" key={message.id} onClick={() => openMessage(message)} aria-label={`Read ${message.subject} from ${message.sender}`}>
                     <span className="mail-row-icon" aria-hidden="true"><Mail size={16} /></span><span className="mail-row-main"><strong>{message.sender}</strong><span className="mail-row-subject">{message.subject}</span><span className="mail-row-preview">{message.plainText.replace(/\s+/g, " ").slice(0, 150)}</span></span><time dateTime={message.date || undefined}>{formatDate(message.date, true)}</time><ChevronRight size={15} className="mail-row-chevron" aria-hidden="true" />
                   </button>)
                     : <div className="mail-empty"><Mail size={25} /><strong>{activeQuery ? "No matching messages" : `No messages in ${folder === "INBOX" ? "Inbox" : folder === "SENT" ? "Sent" : "Starred"}`}</strong><p>{activeQuery ? "Try different search terms or clear the search." : "When messages are available, they will appear here."}</p></div>}
             </div>
-            <footer className="mail-list-footer"><span>{listLoading ? "Loading" : `${messages.length} message${messages.length === 1 ? "" : "s"}`} · up to 20 shown</span><span>Search uses Gmail query syntax</span></footer>
+            <footer className="mail-list-footer"><span>{listLoading ? "Loading" : `${messages.length} message${messages.length === 1 ? "" : "s"}`}{nextPageToken ? " · more available" : ""}</span>{nextPageToken && <button type="button" className="button secondary" disabled={loadingMore} onClick={() => void loadMessages(folder, activeQuery, nextPageToken)}>{loadingMore ? "Loading…" : "Load more"}</button>}<span>Search uses Gmail query syntax</span></footer>
           </>}
         </div>
       </div>
