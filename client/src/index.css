@@ -179,6 +179,11 @@ table { width: 100%; border-collapse: collapse; min-width: 720px; } th { color: 
 .cloud-row { min-height: 52px; display: grid; grid-template-columns: minmax(0, 1.6fr) 120px 190px 104px; align-items: center; gap: 12px; padding: 0 16px; border-top: 1px solid #1b2635; color: #aebed0; font-size: 11px; }
 .cloud-head { min-height: 38px; border-top: 0; color: #60738b; font: 600 9px "IBM Plex Mono", monospace; letter-spacing: .08em; }
 .cloud-name { display: flex; align-items: center; gap: 9px; min-width: 0; overflow: hidden; color: #d3e4f1; font: 500 11px "IBM Plex Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-file-open { border: 0; padding: 0; background: transparent; text-align: left; cursor: pointer; }
+.cloud-file-open > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-file-open:hover:not(:disabled) { color: #fff; text-decoration: underline; text-decoration-color: var(--cyan); }
+.cloud-file-open:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 2px; }
+.cloud-file-open:disabled { cursor: not-allowed; opacity: .6; }
 .cloud-name svg { color: var(--cyan); flex: 0 0 auto; }
 .cloud-actions { display: flex; justify-content: end; gap: 3px; }
 .cloud-empty { display: grid; place-items: center; gap: 8px; min-height: 230px; color: #5e748c; }

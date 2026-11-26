@@ -528,7 +528,11 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
     {unavailable && <div className="mail-status-card mail-status-pending" role="status">
       <CircleAlert size={19} aria-hidden="true" />
       <div><strong>{isConfigured ? "Gmail is not connected" : "Gmail is not configured"}</strong>
-        <p>{status?.error || "Google OAuth and Gmail API host setup is pending. Configure the host integration before connecting a mailbox."}</p>
+        <p>{status?.error || (isConfigured
+          ? clientId?.trim()
+            ? `Host setup is ready. Select Connect Google and authorize ${ownerEmail || "the Google account for the signed-in TMP Server owner"}.`
+            : "The host is configured, but this dashboard build is missing VITE_GOOGLE_CLIENT_ID. Add it as a GitHub Actions repository variable and redeploy."
+          : "The host agent has not loaded both Gmail OAuth settings. Configure GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in its private environment, then restart the service.")}</p>
         {ownerEmail && <small>TMP Server owner session: {ownerEmail}</small>}
       </div>
       {isConfigured && <button className="button primary" type="button" onClick={connect} disabled={busy || !clientId?.trim()}><ShieldCheck size={15} /> {busy ? "Waiting for Google…" : "Connect Google"}</button>}
