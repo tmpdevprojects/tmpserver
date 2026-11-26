@@ -676,7 +676,16 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
       </div>
       {isConfigured && <button className="button primary" type="button" onClick={connect} disabled={busy || !clientId?.trim()}><ShieldCheck size={15} /> {busy ? "Waiting for Google…" : "Connect Google"}</button>}
     </div>}
-    {!statusLoading && status === null && <div className="mail-status-card mail-status-pending" role="status"><CircleAlert size={19} /><div><strong>Connection status unavailable</strong><p>Could not verify Gmail setup. Check the host connection, then refresh status.</p></div></div>}
+    {!statusLoading && status === null && <div className="mail-status-card mail-status-pending" role="status">
+      <CircleAlert size={19} />
+      <div>
+        <strong>Connection status unavailable</strong>
+        <p>Could not verify Gmail setup. You can try authorising Google again below.</p>
+      </div>
+      <button className="button primary" type="button" onClick={connect} disabled={busy || !clientId?.trim()}>
+        <ShieldCheck size={15} /> {busy ? "Waiting for Google…" : "Re-authorise Google"}
+      </button>
+    </div>}
 
     {error && <div className="mail-feedback mail-feedback-error" role="alert"><CircleAlert size={15} /><span>{error}</span><button type="button" className="mail-feedback-dismiss" aria-label="Dismiss error" onClick={() => setError("")}><X size={14} /></button></div>}
     {notice && <div className="mail-feedback mail-feedback-success" role="status" aria-live="polite"><Check size={15} /><span>{notice}</span><button type="button" className="mail-feedback-dismiss" aria-label="Dismiss notification" onClick={() => setNotice("")}><X size={14} /></button></div>}
