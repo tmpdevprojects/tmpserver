@@ -470,8 +470,12 @@ def gmail_exchange_code(code, redirect_uri, config):
     result = gmail_provider_json("https://oauth2.googleapis.com/token", data, {"Content-Type": "application/x-www-form-urlencoded"})
     access_token = result.get("access_token")
     refresh_token = result.get("refresh_token")
-    scope_value = result.get("scope", "")
-    scopes = scope_value.split() if isinstance(scope_value, str) else []
+    scope_value = result.get("scope")
+    if scope_value is None:
+        # OAuth permits omitting scope when it is identical to the requested scope set.
+        scopes = sorted(GMAIL_SCOPES)
+    else:
+        scopes = scope_value.split() if isinstance(scope_value, str) else []
     if not isinstance(access_token, str) or not access_token or not isinstance(refresh_token, str) or not refresh_token or set(scopes) != GMAIL_SCOPES:
         missing = []
         if not isinstance(access_token, str) or not access_token:
