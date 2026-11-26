@@ -40,6 +40,7 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_SUPABASE_OWNER_EMAIL: ${{ secrets.VITE_SUPABASE_OWNER_EMAIL }}
           VITE_HOST_API_URL: https://api.tmpserver.com
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
         run: pnpm build:static
       - name: Configure Pages
         uses: actions/configure-pages@v5

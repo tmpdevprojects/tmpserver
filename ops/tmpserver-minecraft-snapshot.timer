@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily 22:00 TMP Server Minecraft recovery snapshot
+
+[Timer]
+OnCalendar=*-*-* 22:00:00 Europe/London
+Persistent=true
+Unit=tmpserver-minecraft-snapshot.service
+
+[Install]
+WantedBy=timers.target

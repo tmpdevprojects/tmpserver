@@ -1,47 +1,38 @@
 # TMP Server dashboard implementation status
 
-Checked items below describe code present in this repository; they do not mean every authenticated host route has been tested. On 2026-11-24, the user fast-forwarded the host to `46b284d`, restarted `tmpserver-host-agent`, and confirmed local `/api/health` returns HTTP 200. Authenticated Cloud folder operations and other host routes remain to be tested.
+Checked items describe repository code or documentation only. They do not mean the changes are installed on the Linux host, the Gmail account is connected, a scheduled snapshot has run, or a restore has been tested. The latest user-provided host output on 2026-11-25 showed the separate rolling verified-HDD backup writing successfully.
 
-## Owner access and public dashboard
-- [x] Keep the Pages dashboard Supabase-authenticated and limit browser and host-agent access to `charliehenworth92@gmail.com`; do not restore member/invite access or expose host telemetry through the unauthenticated health endpoint.
-- [x] Keep `tmpserver.com` as the admin panel domain, use `api.tmpserver.com` as the host-agent API origin, and retain `play.tmpserver.com` for the Minecraft connection.
-- [x] Keep the dashboard free of fabricated live metrics, uptime, logs, activity, alerts, and service states; display live host data only from the authenticated agent.
+## Owner access and dashboard
+- [x] Keep the Pages dashboard Supabase-authenticated and restrict browser/host-agent access to `charliehenworth92@gmail.com`; do not restore member/invite access or expose host telemetry through unauthenticated health.
+- [x] Keep `tmpserver.com` as the admin panel, `api.tmpserver.com` as host-agent API, and `play.tmpserver.com` as Minecraft domain.
+- [x] Keep live metrics based on authenticated host telemetry and separate browser-local manual service/site states from actual host operations.
+- [x] Keep the OS label exactly `TMP x Triumphant OS v27.13.0`.
 
-## Minecraft, websites, and manual registry
-- [ ] Keep Minecraft lifecycle, settings, console, whitelist and backup operations connected to allowlisted host-agent actions; confirm backups before controlled stop/restart/update/settings changes. Settings must read and update quoted as well as bare numeric YAML values in the existing Compose file without replacing unrelated configuration.
-- [x] Keep static website deployment separate from Cloud: websites use ZIP archives only, with the existing 50 MiB limit and static `index.html` requirement; Node/PHP runtimes are not presented as available.
-- [x] Persist manually added service/site entries in browser-local storage, merge them with live host polling, and offer manual Running/Degraded/Stopped statuses only for entries not linked to host-managed services. Make off-platform website entries findable and editable/removable directly from the Websites page; migrate valid older browser-local records so missing legacy flags do not hide their controls. Label these as browser-local display states that do not execute host commands.
-- [x] Keep lifecycle actions read-only for Docker containers without configured operations; only expose real Minecraft and managed-website operations.
+## Cloud and file handling
+- [x] Support arbitrary Cloud file types up to 20 GB per file, enforced in the browser and host agent with bounded sequential 64 MiB chunks; accept multiple selected files and show per-file progress/errors.
+- [x] Keep upload, completion, cancellation, listing, folder creation, download, and deletion owner-authenticated and path-safe; do not conflate Cloud files with website ZIP deployment.
+- [x] Organize Cloud with nested folders, breadcrumbs, categories/type views, and sequential multi-file uploads.
+- [ ] Fail closed for Cloud actions unless UUID `7A404FAD470CB2A3` is mounted at `/mnt/tmpserver-hdd` and `/opt/tmpserver/cloud` is the exact bind of `/mnt/tmpserver-hdd/tmpserver-cloud`; retry mount activation after reconnect and never use a root-disk fallback. End-to-end authenticated dashboard verification is still required.
+- [x] Keep the tracked `ops/tmpserver-minecraft-backup` fail-closed on verified HDD identity and exact Cloud bind. The user installed it and supplied output showing a successful verified-HDD rolling backup; this confirms neither a daily timer nor a restore.
+- [x] Preserve existing root-disk and HDD rolling backup contents with unique copies and matching SHA-256 values as shown in the user's 2026-11-25 output. Do not overwrite, merge, or migrate Cloud trees without a reviewed plan.
 
-## OS identity and external storage
-- [x] Display the OS identity exactly as `TMP x Triumphant OS v27.13.0` in host telemetry, diagnostics and settings/reporting.
-- [x] Detect `/mnt/tmpserver-hdd` as mounted only when it is truly mounted; report capacity, used/free space, whether `/opt/tmpserver/cloud` is backed by that external drive, and the `/mnt/tmpserver-hdd/tmpserver-restic` target-directory path/presence without claiming backup history or repository integrity.
-- [x] Do not erase, partition, format or migrate the 1 TB external HDD.
+## Daily Minecraft snapshots and recovery
+- [x] Add a separate systemd oneshot service and persistent timer for every day at 22:00 local `Europe/London`; if the drive is absent, retry for at most five minutes and fail closed unless the expected HDD UUID and exact Cloud bind are verified.
+- [x] Write a unique timestamped archive on the HDD containing Minecraft `data/` and `compose.yml`, plus a SHA-256 checksum; preserve `minecraft-latest.tar.gz` and all prior snapshots, and do not prune automatically. The snapshot flushes saves, pauses world saving while archiving, and uses EXIT cleanup plus HUP/INT/TERM traps to attempt `save-on`; SIGKILL or power loss cannot run cleanup.
+- [x] Provide safe restore guidance that verifies the checksum and preserves current data before replacement. State that these are Minecraft service snapshots, not a bootable Linux image or full-system backup.
+- [ ] Install/enable the new systemd units on the Linux host and confirm a successful timer run; this Sandbox has not installed or run them.
+- [ ] Complete and verify an actual restore before claiming Minecraft recovery from a snapshot has been proven.
 
-## Cloud file management
-- [x] Support arbitrary Cloud file types up to 20 GiB per file through bounded sequential 64 MiB chunks; do not hold a 20 GiB request body or a second full-sized staging copy in memory. Let the user select multiple files in one picker action and upload them sequentially, with per-file progress, size checks, duplicate-destination protection, and a summary of successes/failures.
-- [x] Keep Cloud upload, completion, cancellation, listing, download and deletion owner-authenticated and path-safe, including traversal and symlink rejection; Cloud deletion is distinct from website ZIP deployment.
-- [x] Show upload progress and actionable size/network/storage errors. Use browser streaming download where available and explain the large-file browser compatibility limit otherwise.
-- [ ] Fail closed for Cloud listing, upload/chunk/completion/cancel, folder creation, download, and deletion unless the configured HDD UUID `7A404FAD470CB2A3` is mounted at `/mnt/tmpserver-hdd` and `/opt/tmpserver/cloud` is the verified bind of `/mnt/tmpserver-hdd/tmpserver-cloud`. Retry systemd mount activation after reconnection, clear stale files when readiness cannot be confirmed, and never create or use a system-disk fallback.
-- [ ] Verify the tracked `ops/tmpserver-minecraft-backup` script before installing it as `/usr/local/bin/tmpserver-minecraft-backup`; it must check the same UUID and exact bind mount before writing and must not create the Cloud directory on the root disk.
-- [ ] Preserve both existing `minecraft-latest.tar.gz` files and all other files. Before any bind-mount cutover, copy the distinct root-disk backup to a unique non-overwriting name on the HDD and verify its SHA-256; do not merge, replace, or migrate Cloud trees without a reviewed plan.
+## Mail and email digest
+- [x] Add a TMP-branded Gmail-inspired Mail page for the signed-in owner using Google Identity Services popup authorization-code flow. Match the connected Google account to the dashboard owner; request only `gmail.readonly` and `gmail.send`; support Inbox, Sent, Starred, Gmail search, message reading, and plain-text compose/send.
+- [x] Keep the Google client secret and refresh token in private host-side files, return short-lived access tokens only to the authenticated owner, keep them in browser memory, and never persist/log email content. Show Gmail as unconfigured until OAuth client/API setup and authorization are complete.
+- [ ] Complete Google Cloud OAuth/Gmail API setup, set the public client ID in GitHub Actions, install private host environment settings, and authorize the matching Gmail account. No credentials were requested or entered here; the mailbox is not connected yet.
+- [ ] Restyle the existing private hourly HTML digest for desktop/mobile scanning and add real host/Minecraft/HDD/backup detail while preserving its existing sender and cadence. Keep plain-text fallback and escape untrusted values; never read or print `/etc/tmpserver/host-agent.env` and never commit the private digest script.
+- [ ] The host-side `tmpserver-hourly-digest.py` is not available in this repository. The requested digest change remains blocked until a sanitized copy is supplied or the user authorizes a separate template; the live digest remains unchanged.
 
-## Plugins, logs, diagnostics and administration
-- [x] Add an authenticated Minecraft plugin page backed by actual Paper plugin JARs; validate JAR archive descriptors, limit uploads, restrict changes to the configured owner, create uploaded JARs readable by Paper's UID 1000, delete only the JAR (not plugin data folders), and state that a Minecraft restart is needed.
-- [x] Add logs, alerts, diagnostics, admin and settings views based on host/Minecraft/network/disk/external-drive/Docker/firewall/systemd/backup telemetry. Clearly mark native VM/Proxmox management unavailable unless supported by the host.
-- [x] Bound Docker log retrieval, tolerate per-container timeouts, and globally order the returned log snapshot using the original container timestamps. State that Docker logs are not systemd journal, Caddy access logs or persistent history.
-- [x] Audit visible controls and copy so unsupported operations are read-only/unavailable rather than portrayed as working.
-
-## Cloud organization, logs, mail, and Bedrock connectivity
-- [x] Put output logs in a separate tab so they are no longer duplicated on Overview, and retain the dedicated filtered Logs view. Docker logs poll only while the Logs page is selected.
-- [x] Make Cloud look better and have separate tabs/folders for different items like Google does; preserve arbitrary file types, nested paths, 20 GiB per-file uploads, and safe authenticated file operations. Added authenticated folder listing/creation, breadcrumbs, local categories, current-folder uploads, responsive layout, and sequential multi-file selection. The updated host agent is deployed; authenticated folder behavior still needs an in-dashboard test.
-- [ ] Configure in a Gmail-like mail client using the same info for the email pulse currently. Keep credentials server-side; implement inbox/read/search/send only if the existing provider configuration supports those operations, and do not represent SMTP-only sending as an inbox.
-- [ ] Restore Bedrock access for the reported Terracotta initial-connection error. Verify Geyser/Floodgate, supported NetherNet transport, TCP signaling and UDP gameplay port exposure; make no world-data or HDD changes.
-
-## Remaining activation and host-side work
-- [ ] Deploy and validate the HDD fail-closed dashboard/host-agent changes separately from plugin commit `987b42f`; after a safe backup-preserving host sequence, verify the HDD UUID, `/mnt/tmpserver-hdd/tmpserver-cloud` source, exact `/opt/tmpserver/cloud` bind mount, and the owner-authenticated Cloud listing before declaring reconnect behavior working.
-- [ ] Cloudflare/API reachability is confirmed by the user's successful authenticated Cloud upload (2026-11-24); verify that the tunnel stays connected and separately test Cloud listing/deletion, plugin, settings, logs and state routes.
-- [ ] The user fast-forwarded to `46b284d`, passed the host-agent syntax check and restarted `tmpserver-host-agent`; systemd was active and localhost health returned HTTP 200 at that time. Verify authenticated `/api/settings`, `/api/cloud/*`, `/api/minecraft/plugins`, `/api/logs`, and `/api/state` routes after the current changes are deployed.
-- [ ] Deploy the plugin-upload permission fix, then change only the existing `ArmorHUD.jar` from `root:root 0600` to a Paper-readable mode such as `0644`; do not recursively change plugin or world-data permissions. Restart Paper only after a successful backup and verify Geyser/Floodgate load.
-- [ ] Verify or install the host-side shutdown/unplug backup trigger; no shutdown hook is present in this repository, and the dashboard does not claim that such a hook is active.
-- [ ] Locate the Linux host's hourly digest script or add it to the repository before changing or claiming its OS label. `ops/tmpserver-hourly-digest.py` is absent from the repository; its host-side copy was not inspected or modified in this work.
+## DNS and remaining host work
+- [x] Inspect `play.tmpserver.com` read-only: the active Cloudflare zone has a DNS-only A record to `109.156.215.120`, matching the previously reported host IP. No AAAA, CNAME, or Minecraft SRV record was found. Findings and official Cloudflare source URLs are saved in `/tmp/dns-play-tmpserver-findings-2026-11-26.md`; the host's current public IPv4 is not verified and no DNS record was changed.
+- [ ] Resolve Bedrock's Terracotta initial-connection failure after checking the current host WAN IPv4 and Geyser/Floodgate/NetherNet response; earlier supplied captures show UDP reaches host port 19132, so DNS resolution alone does not establish or fix the server response.
+- [ ] Verify authenticated Cloud folders/files, settings, plugins, logs, and state after the latest host-agent changes are deployed.
+- [ ] Change only individual plugin JAR modes if required; never recursively change plugin/world ownership or permissions. Restart Paper only after a successful verified-HDD backup.
+- [ ] Confirm the existing Cloudflare tunnel and current upload/listing/deletion behavior separately; do not infer these from the API health endpoint.

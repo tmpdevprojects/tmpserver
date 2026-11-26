@@ -5,6 +5,7 @@ import io
 import mimetypes
 import os
 import re
+import stat
 import shlex
 import shutil
 import subprocess
@@ -14,7 +15,7 @@ import zipfile
 import selectors
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -40,7 +41,7 @@ CLOUD_ROOT = "/opt/tmpserver/cloud"
 WEBSITES_ROOT = "/opt/tmpserver/websites"
 WEBSITES_INDEX = os.path.join(WEBSITES_ROOT, "sites.json")
 CADDYFILE = "/etc/caddy/Caddyfile"
-MAX_CLOUD_FILE_SIZE = 20 * 1024**3
+MAX_CLOUD_FILE_SIZE = 20_000_000_000
 CLOUD_UPLOAD_CHUNK_BYTES = 64 * 1024**2
 MAX_CLOUD_UPLOAD_CHUNKS = (MAX_CLOUD_FILE_SIZE + CLOUD_UPLOAD_CHUNK_BYTES - 1) // CLOUD_UPLOAD_CHUNK_BYTES
 MAX_WEBSITE_UPLOAD = 50 * 1024**2
@@ -266,6 +267,191 @@ def auth_user(handler):
     if OWNER_EMAIL and email == OWNER_EMAIL:
         return user
     return None
+
+
+GMAIL_SCOPES = {
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+}
+
+
+class GmailStorageError(Exception):
+    pass
+
+
+class GmailProviderError(Exception):
+    pass
+
+
+def gmail_config():
+    client_id = os.environ.get("GMAIL_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GMAIL_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        return None
+    return client_id, client_secret
+
+
+def gmail_token_path():
+    path = os.path.abspath(os.environ.get("GMAIL_TOKEN_PATH", "/var/lib/tmpserver-gmail/oauth.json"))
+    if not os.path.basename(path) or path == os.path.abspath(os.sep):
+        raise GmailStorageError("Gmail token storage is unavailable.")
+    return path
+
+
+def gmail_secure_directory(create=False):
+    path = os.path.dirname(gmail_token_path())
+    try:
+        if create and not os.path.exists(path):
+            os.makedirs(path, mode=0o700, exist_ok=True)
+        info = os.lstat(path)
+    except OSError as error:
+        raise GmailStorageError("Gmail token storage is unavailable.") from error
+    if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700 or info.st_uid != os.geteuid():
+        raise GmailStorageError("Gmail token storage permissions are unsafe.")
+    return path
+
+
+def gmail_read_token():
+    path = gmail_token_path()
+    if not os.path.lexists(path):
+        parent = os.path.dirname(path)
+        if not os.path.lexists(parent):
+            return None
+    directory = gmail_secure_directory()
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
+            raise GmailStorageError("Gmail token storage permissions are unsafe.")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as file:
+            opened = os.fstat(file.fileno())
+            if not stat.S_ISREG(opened.st_mode) or opened.st_ino != info.st_ino or opened.st_dev != info.st_dev:
+                raise GmailStorageError("Gmail token storage is unsafe.")
+            raw = file.read(16385)
+    except FileNotFoundError:
+        return None
+    except GmailStorageError:
+        raise
+    except OSError as error:
+        raise GmailStorageError("Gmail token storage is unavailable.") from error
+    if len(raw) > 16384:
+        raise GmailStorageError("Gmail token storage is invalid.")
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise GmailStorageError("Gmail token storage is invalid.") from error
+    if (not isinstance(value, dict) or set(value) != {"refresh_token", "email", "scopes", "timestamp"}
+            or not isinstance(value.get("refresh_token"), str) or not value["refresh_token"]
+            or not isinstance(value.get("email"), str) or not value["email"]
+            or not isinstance(value.get("scopes"), list) or set(value["scopes"]) != GMAIL_SCOPES
+            or not isinstance(value.get("timestamp"), str)):
+        raise GmailStorageError("Gmail token storage is invalid.")
+    return value
+
+
+def gmail_write_token(refresh_token, email, scopes):
+    path = gmail_token_path()
+    directory = gmail_secure_directory(create=True)
+    if not isinstance(scopes, list) or set(scopes) != GMAIL_SCOPES:
+        raise GmailStorageError("Gmail authorization scopes are invalid.")
+    try:
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            info = None
+        if info is not None and (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid()):
+            raise GmailStorageError("Gmail token storage permissions are unsafe.")
+        value = {"refresh_token": refresh_token, "email": email, "scopes": scopes, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        fd, temporary_path = tempfile.mkstemp(prefix=".oauth-", dir=directory)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                json.dump(value, file, separators=(",", ":"))
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temporary_path, path)
+            directory_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except Exception:
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
+            raise
+    except GmailStorageError:
+        raise
+    except OSError as error:
+        raise GmailStorageError("Gmail token storage could not be updated securely.") from error
+
+
+def gmail_remove_token():
+    path = gmail_token_path()
+    if not os.path.lexists(path) and not os.path.lexists(os.path.dirname(path)):
+        return
+    gmail_secure_directory()
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise GmailStorageError("Gmail token storage is unavailable.") from error
+    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
+        raise GmailStorageError("Gmail token storage permissions are unsafe.")
+    try:
+        os.unlink(path)
+    except OSError as error:
+        raise GmailStorageError("Gmail token storage could not be removed.") from error
+
+
+def gmail_provider_json(url, data=None, headers=None):
+    request = Request(url, data=data, headers=headers or {}, method="POST" if data is not None else "GET")
+    try:
+        with urlopen(request, timeout=12) as response:
+            raw = response.read(65537)
+    except (HTTPError, URLError, TimeoutError, OSError) as error:
+        raise GmailProviderError("Google could not complete the Gmail authorization request.") from error
+    if len(raw) > 65536:
+        raise GmailProviderError("Google returned an invalid authorization response.")
+    try:
+        result = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise GmailProviderError("Google returned an invalid authorization response.") from error
+    if not isinstance(result, dict):
+        raise GmailProviderError("Google returned an invalid authorization response.")
+    return result
+
+
+def gmail_exchange_code(code, redirect_uri, config):
+    client_id, client_secret = config
+    data = urlencode({"code": code, "client_id": client_id, "client_secret": client_secret, "redirect_uri": redirect_uri, "grant_type": "authorization_code"}).encode()
+    result = gmail_provider_json("https://oauth2.googleapis.com/token", data, {"Content-Type": "application/x-www-form-urlencoded"})
+    access_token = result.get("access_token")
+    refresh_token = result.get("refresh_token")
+    scopes = result.get("scope", "").split()
+    if not isinstance(access_token, str) or not access_token or not isinstance(refresh_token, str) or not refresh_token or set(scopes) != GMAIL_SCOPES:
+        raise GmailProviderError("Google did not grant the required Gmail access.")
+    profile = gmail_provider_json("https://gmail.googleapis.com/gmail/v1/users/me/profile", headers={"Authorization": f"Bearer {access_token}"})
+    email = profile.get("emailAddress")
+    if not isinstance(email, str) or not email:
+        raise GmailProviderError("Google could not verify the Gmail account.")
+    return refresh_token, email, sorted(GMAIL_SCOPES)
+
+
+def gmail_refresh_token(refresh_token, config, scopes):
+    client_id, client_secret = config
+    data = urlencode({"refresh_token": refresh_token, "client_id": client_id, "client_secret": client_secret, "grant_type": "refresh_token"}).encode()
+    result = gmail_provider_json("https://oauth2.googleapis.com/token", data, {"Content-Type": "application/x-www-form-urlencoded"})
+    access_token = result.get("access_token")
+    expires_in = result.get("expires_in")
+    returned_scopes = result.get("scope")
+    if returned_scopes is not None and set(str(returned_scopes).split()) != set(scopes):
+        raise GmailProviderError("Google returned an invalid Gmail authorization response.")
+    if not isinstance(access_token, str) or not access_token or type(expires_in) is not int or expires_in <= 0:
+        raise GmailProviderError("Google could not refresh Gmail access.")
+    return access_token, expires_in
 
 
 def host_state():
@@ -744,9 +930,10 @@ class Handler(BaseHTTPRequestHandler):
         body = json_bytes(payload)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", self.cors_origin())
-        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Vary", "Origin")
         self.end_headers()
@@ -772,13 +959,36 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", self.cors_origin())
-        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Vary", "Origin")
         self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/gmail/status":
+            user = auth_user(self)
+            if not user or not owner_user(user):
+                self.send_json(401, {"error": "authenticated owner session required"})
+                return
+            config = gmail_config()
+            if not config:
+                self.send_json(200, {"configured": False, "connected": False})
+                return
+            try:
+                saved = gmail_read_token()
+            except GmailStorageError:
+                self.send_json(503, {"error": "Gmail connection storage is unavailable or has unsafe permissions."})
+                return
+            owner_email = str(user.get("email", "")).strip().casefold()
+            mailbox_matches_owner = bool(saved and saved["email"].strip().casefold() == owner_email)
+            result = {"configured": True, "connected": mailbox_matches_owner}
+            if saved:
+                result["email"] = saved["email"]
+                if not mailbox_matches_owner:
+                    result["error"] = "The stored Google account does not match the authenticated owner."
+            self.send_json(200, result)
+            return
         if parsed.path == "/api/minecraft/plugins":
             if not auth_user(self):
                 self.send_json(401, {"error": "authenticated owner session required"})
@@ -855,6 +1065,100 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        gmail_routes = {"/api/gmail/oauth/exchange", "/api/gmail/access-token", "/api/gmail/disconnect"}
+        if parsed.path in gmail_routes:
+            user = auth_user(self)
+            if not user or not owner_user(user):
+                self.send_json(401, {"error": "authenticated owner session required"})
+                return
+            origin = self.headers.get("Origin", "")
+            if origin != origin.rstrip("/") or origin not in ALLOWED_ORIGINS:
+                self.send_json(403, {"error": "Request origin is not allowed."})
+                return
+            if parsed.path == "/api/gmail/oauth/exchange":
+                if self.headers.get("X-Requested-With") != "XmlHttpRequest":
+                    self.send_json(400, {"error": "Gmail authorization request is invalid."})
+                    return
+                content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+                try:
+                    length = int(self.headers.get("Content-Length", "-1"))
+                except ValueError:
+                    length = -1
+                if content_type != "application/json" or not 1 <= length <= 4096:
+                    self.send_json(400 if length <= 4096 else 413, {"error": "Gmail authorization request must be a small JSON object."})
+                    return
+                try:
+                    raw = self.rfile.read(length)
+                    payload = json.loads(raw)
+                    if len(raw) != length or not isinstance(payload, dict) or set(payload) != {"code", "redirectUri"}:
+                        raise ValueError
+                except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+                    self.send_json(400, {"error": "Gmail authorization request is invalid."})
+                    return
+                code = payload.get("code")
+                redirect_uri = payload.get("redirectUri")
+                if (not isinstance(code, str) or not code or len(code) > 3000
+                        or not isinstance(redirect_uri, str) or redirect_uri != origin):
+                    self.send_json(400, {"error": "Gmail authorization request is invalid."})
+                    return
+                config = gmail_config()
+                if not config:
+                    self.send_json(503, {"error": "Gmail OAuth is not configured on this host."})
+                    return
+                try:
+                    refresh_token, email, scopes = gmail_exchange_code(code, redirect_uri, config)
+                    if email.strip().casefold() != str(user.get("email", "")).strip().casefold():
+                        self.send_json(403, {"error": "The Google account must match the authenticated owner account."})
+                        return
+                    gmail_write_token(refresh_token, email, scopes)
+                except GmailProviderError:
+                    self.send_json(502, {"error": "Google could not verify the Gmail authorization."})
+                    return
+                except GmailStorageError:
+                    self.send_json(503, {"error": "Gmail connection could not be stored securely."})
+                    return
+                self.send_json(200, {"connected": True, "email": email})
+                return
+            if parsed.path == "/api/gmail/access-token":
+                config = gmail_config()
+                if not config:
+                    self.send_json(503, {"error": "Gmail OAuth is not configured on this host."})
+                    return
+                try:
+                    saved = gmail_read_token()
+                    if not saved:
+                        self.send_json(409, {"error": "Gmail is not connected."})
+                        return
+                    if saved["email"].strip().casefold() != str(user.get("email", "")).strip().casefold():
+                        self.send_json(403, {"error": "The stored Google account does not match the authenticated owner."})
+                        return
+                    access_token, expires_in = gmail_refresh_token(saved["refresh_token"], config, saved["scopes"])
+                except GmailStorageError:
+                    self.send_json(503, {"error": "Gmail connection storage is unavailable or has unsafe permissions."})
+                    return
+                except GmailProviderError:
+                    self.send_json(502, {"error": "Google could not refresh Gmail access."})
+                    return
+                self.send_json(200, {"accessToken": access_token, "expiresIn": expires_in})
+                return
+            try:
+                saved = gmail_read_token()
+                if saved:
+                    request = Request("https://oauth2.googleapis.com/revoke", data=urlencode({"token": saved["refresh_token"]}).encode(), headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+                    try:
+                        with urlopen(request, timeout=12) as response:
+                            response.read(4096)
+                    except (HTTPError, URLError, TimeoutError, OSError) as error:
+                        raise GmailProviderError("Google could not revoke the Gmail connection.") from error
+                gmail_remove_token()
+            except GmailStorageError:
+                self.send_json(503, {"error": "Gmail connection storage is unavailable or has unsafe permissions."})
+                return
+            except GmailProviderError:
+                self.send_json(502, {"error": "Google could not revoke the Gmail connection."})
+                return
+            self.send_json(200, {"ok": True, "connected": False})
+            return
         if parsed.path in {"/api/minecraft/plugins/upload", "/api/minecraft/plugins/delete"}:
             user = auth_user(self)
             if not user:

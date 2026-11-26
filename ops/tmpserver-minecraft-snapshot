@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+ROOT=/opt/tmpserver/minecraft
+DATA="$ROOT/data"
+COMPOSE="$ROOT/compose.yml"
+HDD_MOUNT=/mnt/tmpserver-hdd
+HDD_CLOUD="$HDD_MOUNT/tmpserver-cloud"
+CLOUD=/opt/tmpserver/cloud
+HDD_UUID=7A404FAD470CB2A3
+SNAPSHOT_DIR="$CLOUD/minecraft-snapshots"
+MAX_WAIT_SECONDS=300
+RETRY_SECONDS=30
+SAVES_PAUSED=0
+tmp_archive=""
+tmp_checksum=""
+
+refuse() {
+  printf 'Minecraft snapshot refused: %s\n' "$1" >&2
+  return 1
+}
+
+cleanup() {
+  local exit_status=$?
+  # Prevent cleanup re-entry and allow its save-on attempt to finish during shutdown.
+  trap - EXIT
+  trap '' HUP INT TERM
+  if [[ -n "$tmp_archive" || -n "$tmp_checksum" ]]; then
+    if verify_snapshot_destination >/dev/null 2>&1; then
+      [[ -z "$tmp_archive" ]] || rm -f -- "$tmp_archive" || exit_status=1
+      [[ -z "$tmp_checksum" ]] || rm -f -- "$tmp_checksum" || exit_status=1
+    else
+      printf 'WARNING: Snapshot HDD destination is no longer verifiable; leaving any temporary paths untouched rather than deleting through a fallback mount.\n' >&2
+      exit_status=1
+    fi
+  fi
+  if (( SAVES_PAUSED )); then
+    if docker exec tmpserver-minecraft rcon-cli save-on >/dev/null 2>&1; then
+      SAVES_PAUSED=0
+    else
+      printf 'WARNING: Could not re-enable Minecraft world saving; run `docker exec tmpserver-minecraft rcon-cli save-on` after checking the server.\n' >&2
+      exit_status=1
+    fi
+  fi
+  exit "$exit_status"
+}
+
+verify_cloud_mount() {
+  local hdd_row hdd_target hdd_source hdd_fstype hdd_device cloud_row cloud_target cloud_source cloud_fstype cloud_device source_device actual_uuid hdd_identity cloud_identity
+
+  hdd_row="$(findmnt -rn -M "$HDD_MOUNT" -o TARGET,SOURCE,FSTYPE,MAJ:MIN 2>/dev/null | awk '$3 != "autofs" { row = $0 } END { print row }' || true)"
+  if [[ -z "$hdd_row" ]]; then
+    refuse "the required HDD is not mounted at $HDD_MOUNT."
+    return 1
+  fi
+  read -r hdd_target hdd_source hdd_fstype hdd_device <<<"$hdd_row"
+  if [[ "$hdd_target" != "$HDD_MOUNT" || "$hdd_fstype" == autofs ]]; then
+    refuse "the HDD mount is only an automount placeholder or is at the wrong path."
+    return 1
+  fi
+
+  source_device="${hdd_source%%\[*}"
+  if [[ "$source_device" != /dev/* ]]; then
+    refuse "the HDD mount is not backed by a block device."
+    return 1
+  fi
+  actual_uuid="$(blkid -s UUID -o value "$source_device" 2>/dev/null | tr -d '\r\n' | tr '[:lower:]' '[:upper:]' || true)"
+  if [[ "$actual_uuid" != "$HDD_UUID" ]]; then
+    refuse "mounted device UUID '$actual_uuid' does not match expected UUID $HDD_UUID."
+    return 1
+  fi
+
+  cloud_row="$(findmnt -rn -M "$CLOUD" -o TARGET,SOURCE,FSTYPE,MAJ:MIN 2>/dev/null || true)"
+  if [[ -z "$cloud_row" ]]; then
+    refuse "$CLOUD is not an active mount; the system-disk directory will not be used."
+    return 1
+  fi
+  read -r cloud_target cloud_source cloud_fstype cloud_device <<<"$cloud_row"
+  if [[ "$cloud_target" != "$CLOUD" || "$cloud_fstype" == autofs || "$cloud_device" != "$hdd_device" ]]; then
+    refuse "$CLOUD is not an exact active bind backed by the verified HDD."
+    return 1
+  fi
+  if [[ ! -d "$HDD_CLOUD" || ! -d "$CLOUD" ]]; then
+    refuse "the existing HDD Cloud directory or its bind target is missing; this script will not create either."
+    return 1
+  fi
+
+  hdd_identity="$(stat -Lc '%d:%i' "$HDD_CLOUD" 2>/dev/null || true)"
+  cloud_identity="$(stat -Lc '%d:%i' "$CLOUD" 2>/dev/null || true)"
+  if [[ -z "$hdd_identity" || "$hdd_identity" != "$cloud_identity" ]]; then
+    refuse "$CLOUD is not the exact $HDD_CLOUD directory; no fallback is permitted."
+    return 1
+  fi
+}
+
+verify_snapshot_destination() {
+  local cloud_device snapshot_device
+  verify_cloud_mount || return 1
+  if [[ ! -d "$SNAPSHOT_DIR" || -L "$SNAPSHOT_DIR" ]]; then
+    refuse "the Minecraft snapshot directory is missing or is a symbolic link."
+    return 1
+  fi
+  cloud_device="$(stat -Lc '%d' "$CLOUD" 2>/dev/null || true)"
+  snapshot_device="$(stat -Lc '%d' "$SNAPSHOT_DIR" 2>/dev/null || true)"
+  if [[ -z "$cloud_device" || "$snapshot_device" != "$cloud_device" ]]; then
+    refuse "the Minecraft snapshot directory is not on the verified Cloud HDD filesystem."
+    return 1
+  fi
+}
+
+activate_and_verify_hdd() {
+  local hdd_automount_unit hdd_mount_unit cloud_mount_unit attempt unit state deadline remaining sleep_for
+  hdd_automount_unit="$(systemd-escape --path --suffix=automount "$HDD_MOUNT")"
+  hdd_mount_unit="$(systemd-escape --path --suffix=mount "$HDD_MOUNT")"
+  cloud_mount_unit="$(systemd-escape --path --suffix=mount "$CLOUD")"
+  deadline=$((SECONDS + MAX_WAIT_SECONDS))
+  attempt=0
+
+  while (( SECONDS < deadline )); do
+    attempt=$((attempt + 1))
+    if [[ -e "/dev/disk/by-uuid/$HDD_UUID" ]]; then
+      for unit in "$hdd_automount_unit" "$hdd_mount_unit" "$cloud_mount_unit"; do
+        state="$(timeout 5s systemctl show "$unit" --property=ActiveState --value 2>/dev/null || true)"
+        if [[ "$state" == failed ]]; then
+          timeout 5s systemctl reset-failed "$unit" >/dev/null 2>&1 || true
+        fi
+        remaining=$((deadline - SECONDS))
+        (( remaining > 0 )) || break
+        timeout --signal=TERM --kill-after=2s "${remaining}s" systemctl start "$unit" >/dev/null 2>&1 || true
+      done
+
+      if verify_cloud_mount; then
+        return 0
+      fi
+    else
+      printf 'Snapshot attempt %d: external HDD UUID %s is not connected.\n' "$attempt" "$HDD_UUID" >&2
+    fi
+
+    remaining=$((deadline - SECONDS))
+    (( remaining > 0 )) || break
+    sleep_for="$RETRY_SECONDS"
+    (( sleep_for <= remaining )) || sleep_for="$remaining"
+    sleep "$sleep_for"
+  done
+
+  refuse "the verified HDD and exact Cloud bind did not become ready within $MAX_WAIT_SECONDS seconds."
+  return 1
+}
+
+exec 9>/run/lock/tmpserver-minecraft-snapshot.lock
+flock -n 9 || { refuse "another Minecraft snapshot is already running."; exit 1; }
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+activate_and_verify_hdd || exit 1
+[[ -d "$ROOT" && ! -L "$ROOT" ]] || { refuse "Minecraft root directory is missing or is a symbolic link: $ROOT."; exit 1; }
+[[ -d "$DATA" && ! -L "$DATA" ]] || { refuse "Minecraft data directory is missing or is a symbolic link: $DATA."; exit 1; }
+[[ -f "$COMPOSE" && ! -L "$COMPOSE" ]] || { refuse "Minecraft Compose file is missing or is a symbolic link: $COMPOSE."; exit 1; }
+verify_cloud_mount || exit 1
+
+# The snapshot directory is created only after verifying the expected HDD and exact Cloud bind.
+if [[ -L "$SNAPSHOT_DIR" ]]; then
+  refuse "the snapshot directory is a symbolic link."
+  exit 1
+fi
+mkdir -p -- "$SNAPSHOT_DIR" || { refuse "cannot create the snapshot directory on the verified HDD."; exit 1; }
+verify_snapshot_destination || exit 1
+
+running="$(docker inspect --format '{{.State.Running}}' tmpserver-minecraft 2>/dev/null || true)"
+if [[ "$running" == true ]]; then
+  docker exec tmpserver-minecraft rcon-cli save-all flush || { refuse "Minecraft save-all flush failed; no snapshot was written."; exit 1; }
+  SAVES_PAUSED=1
+  docker exec tmpserver-minecraft rcon-cli save-off || { refuse "Minecraft saving could not be paused safely; no snapshot was written."; exit 1; }
+fi
+
+stamp="$(TZ=Europe/London date +%Y%m%dT%H%M%S%z)"
+archive_name="minecraft-$stamp.tar.gz"
+archive="$SNAPSHOT_DIR/$archive_name"
+checksum="$archive.sha256"
+if [[ -e "$archive" || -L "$archive" || -e "$checksum" || -L "$checksum" ]]; then
+  refuse "a snapshot or checksum already exists for timestamp $stamp; existing files were not overwritten."
+  exit 1
+fi
+
+tmp_archive="$(mktemp "$SNAPSHOT_DIR/.minecraft-snapshot.XXXXXX")"
+tmp_checksum="$(mktemp "$SNAPSHOT_DIR/.minecraft-checksum.XXXXXX")"
+
+tar -C "$ROOT" -czf "$tmp_archive" data compose.yml || { refuse "tar could not archive Minecraft data and Compose configuration."; exit 1; }
+verify_snapshot_destination || exit 1
+chmod 0600 "$tmp_archive" || { refuse "could not set restrictive permissions on the temporary snapshot."; exit 1; }
+hash="$(sha256sum "$tmp_archive" | awk '{print $1}')"
+printf '%s  %s\n' "$hash" "$archive_name" >"$tmp_checksum"
+chmod 0600 "$tmp_checksum" || { refuse "could not set restrictive permissions on the temporary checksum."; exit 1; }
+
+# mv -n prevents replacement; checking that the source disappeared detects a collision.
+verify_snapshot_destination || exit 1
+mv -n -- "$tmp_archive" "$archive"
+if [[ -e "$tmp_archive" ]]; then
+  refuse "the timestamped snapshot destination already exists; it was not overwritten."
+  exit 1
+fi
+tmp_archive=""
+mv -n -- "$tmp_checksum" "$checksum"
+if [[ -e "$tmp_checksum" ]]; then
+  refuse "the checksum destination already exists; the archive was preserved and not overwritten."
+  exit 1
+fi
+tmp_checksum=""
+sync -f "$archive"
+sync -f "$checksum"
+verify_snapshot_destination || exit 1
+
+if (( SAVES_PAUSED )); then
+  docker exec tmpserver-minecraft rcon-cli save-on || { refuse "snapshot was written, but Minecraft world saving could not be re-enabled."; exit 1; }
+  SAVES_PAUSED=0
+fi
+
+printf 'Verified-HDD Minecraft snapshot written: %s\n' "$archive"
+printf 'SHA-256 checksum written: %s\n' "$checksum"

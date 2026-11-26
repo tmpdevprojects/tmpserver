@@ -1,0 +1,17 @@
+[Unit]
+Description=Create verified-HDD TMP Server Minecraft recovery snapshot
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/tmpserver-minecraft-snapshot
+TimeoutStartSec=2h
+TimeoutStopSec=2min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
