@@ -36,10 +36,11 @@ type GoogleCodeClient = { requestCode: () => void };
 type GoogleIdentity = {
   accounts: {
     oauth2: {
-      initCodeClient: (options: {
-        client_id: string;
-        scope: string;
-        ux_mode: "popup";
+	initCodeClient: (options: {
+  	  client_id: string;
+  	  scope: string;
+  	  prompt?: "consent" | "select_account" | "none";
+  	  ux_mode: "popup";
         callback: (response: GoogleCodeResponse) => void;
         error_callback: (response: GoogleCodeErrorResponse) => void;
       }) => GoogleCodeClient;
@@ -468,10 +469,11 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
       return;
     }
     try {
-      const codeClient = identity.accounts.oauth2.initCodeClient({
-        client_id: clientId.trim(),
-        scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify",
-        ux_mode: "popup",
+	const codeClient = identity.accounts.oauth2.initCodeClient({
+  	  client_id: clientId.trim(),
+  	  scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify",
+  	  prompt: "consent",
+  	  ux_mode: "popup",
         callback: response => {
           if (response.error || !response.code) {
             setBusy(false);
