@@ -248,6 +248,17 @@ function safeErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function isBrowserNetworkFailure(error: unknown): boolean {
+  return error instanceof TypeError && /load failed|failed to fetch|networkerror|network request failed/i.test(error.message);
+}
+
+function requestErrorMessage(error: unknown, endpoint: string, fallback: string): string {
+  if (isBrowserNetworkFailure(error)) {
+    return `No response was received while contacting ${endpoint}. Check the browser connection, then use Refresh before trying Google sign-in again.`;
+  }
+  return safeErrorMessage(error, fallback);
+}
+
 export default function MailPanel({ request, ownerEmail }: { request: (path: string, init?: RequestInit) => Promise<Response>; ownerEmail: string }) {
   const [status, setStatus] = useState<GmailStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -289,7 +300,7 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
       return payload;
     } catch (cause) {
       setStatus(null);
-      setError(safeErrorMessage(cause, "Unable to check Gmail connection status."));
+      setError(requestErrorMessage(cause, "/api/gmail/status", "Unable to check Gmail connection status."));
       return null;
     } finally {
       setStatusLoading(false);
@@ -312,7 +323,12 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
     if (!force && cached && cached.expiresAt > Date.now() + 60_000) return cached.value;
     if (pendingTokenRef.current) return pendingTokenRef.current;
     const pending = (async () => {
-      const response = await stableRequest("/api/gmail/access-token", { method: "POST" });
+      let response: Response;
+      try {
+        response = await stableRequest("/api/gmail/access-token", { method: "POST" });
+      } catch (cause) {
+        throw new Error(requestErrorMessage(cause, "/api/gmail/access-token", "Could not obtain Gmail access."));
+      }
       const payload = await responseJson<{ accessToken?: string; expiresIn?: number; error?: string }>(response);
       if (!response.ok || !payload.accessToken) throw new Error(payload.error || `Could not obtain Gmail access (HTTP ${response.status}).`);
       const lifetime = Math.max(0, Number(payload.expiresIn) || 0) * 1000;
@@ -329,16 +345,27 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
 
   const gmailFetch = useCallback(async (url: string, init?: RequestInit): Promise<Response> => {
     let accessToken = await getAccessToken();
-    let response = await fetch(url, {
-      ...init,
-      headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${accessToken}` },
-    });
-    if (response.status === 401) {
-      accessToken = await getAccessToken(true);
+    let response: Response;
+    try {
       response = await fetch(url, {
         ...init,
         headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${accessToken}` },
       });
+    } catch (cause) {
+      if (isBrowserNetworkFailure(cause)) throw new Error("No response was received from the Gmail API. Check the browser connection to Google and try again.");
+      throw cause;
+    }
+    if (response.status === 401) {
+      accessToken = await getAccessToken(true);
+      try {
+        response = await fetch(url, {
+          ...init,
+          headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${accessToken}` },
+        });
+      } catch (cause) {
+        if (isBrowserNetworkFailure(cause)) throw new Error("No response was received from the Gmail API after refreshing access. Check the browser connection to Google and try again.");
+        throw cause;
+      }
     }
     return response;
   }, [getAccessToken]);
@@ -413,7 +440,7 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
               if (latest?.connected) setNotice(`Gmail connected${latest.email ? ` as ${latest.email}` : ""}.`);
               else if (latest) setError(latest.error || "Google authorization finished, but Gmail setup is not yet reported as connected by the host.");
             } catch (cause) {
-              setError(safeErrorMessage(cause, "Unable to complete Google sign-in."));
+              setError(requestErrorMessage(cause, "/api/gmail/oauth/exchange", "Unable to complete Google sign-in."));
             } finally {
               setBusy(false);
             }
