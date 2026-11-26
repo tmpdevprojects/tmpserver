@@ -176,7 +176,7 @@ table { width: 100%; border-collapse: collapse; min-width: 720px; } th { color: 
 .cloud-stats span { color: #637790; font: 600 9px "IBM Plex Mono", monospace; letter-spacing: .1em; }
 .cloud-stats b { color: #e6f0fa; font: 500 20px "IBM Plex Mono", monospace; }
 .cloud-table { overflow: hidden; background: var(--surface); border: 1px solid var(--border-soft); border-radius: 4px; }
-.cloud-row { min-height: 52px; display: grid; grid-template-columns: minmax(0, 1.6fr) 120px 190px 78px; align-items: center; gap: 12px; padding: 0 16px; border-top: 1px solid #1b2635; color: #aebed0; font-size: 11px; }
+.cloud-row { min-height: 52px; display: grid; grid-template-columns: minmax(0, 1.6fr) 120px 190px 104px; align-items: center; gap: 12px; padding: 0 16px; border-top: 1px solid #1b2635; color: #aebed0; font-size: 11px; }
 .cloud-head { min-height: 38px; border-top: 0; color: #60738b; font: 600 9px "IBM Plex Mono", monospace; letter-spacing: .08em; }
 .cloud-name { display: flex; align-items: center; gap: 9px; min-width: 0; overflow: hidden; color: #d3e4f1; font: 500 11px "IBM Plex Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
 .cloud-name svg { color: var(--cyan); flex: 0 0 auto; }
@@ -509,4 +509,37 @@ table { width: 100%; border-collapse: collapse; min-width: 720px; } th { color: 
   .mail-reading-subject { font-size: 17px; }
   .mail-message-meta { align-items: flex-start; flex-wrap: wrap; }
   .mail-message-meta time { width: 100%; margin-left: 43px; text-align: left; }
+}
+
+
+.cloud-preview-help { color: #71869b !important; font-size: 10px !important; }
+.cloud-actions { min-width: 0; }
+.cloud-preview-spin { animation: cloudPreviewSpin .9s linear infinite; }
+@keyframes cloudPreviewSpin { to { transform: rotate(360deg); } }
+.cloud-preview-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid rgba(220, 106, 106, .3); color: #e8a0a0; background: rgba(102, 37, 42, .14); font-size: 11px; }
+.cloud-preview-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(2, 7, 12, .82); backdrop-filter: blur(5px); }
+.cloud-preview-dialog { display: flex; flex-direction: column; width: min(100%, 1040px); max-height: min(90vh, 900px); overflow: hidden; border: 1px solid #2b3d51; border-radius: 7px; background: #101924; box-shadow: 0 24px 90px #000b; }
+.cloud-preview-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 15px 18px; border-bottom: 1px solid #243345; }
+.cloud-preview-header > div { min-width: 0; }
+.cloud-preview-header .eyebrow { margin-bottom: 5px; }
+.cloud-preview-header h2 { margin: 0; overflow-wrap: anywhere; color: #e5eef7; font-size: 14px; font-weight: 550; }
+.cloud-preview-header span { display: block; margin-top: 5px; color: #75899f; font: 9px "IBM Plex Mono", monospace; }
+.cloud-preview-content { display: grid; place-items: center; min-height: 220px; overflow: auto; padding: 16px; background: #080d13; }
+.cloud-preview-content img { display: block; max-width: 100%; max-height: calc(90vh - 130px); object-fit: contain; }
+.cloud-preview-content iframe { width: 100%; height: min(75vh, 760px); border: 0; background: #fff; }
+.cloud-preview-content.text-preview { display: block; }
+.cloud-preview-content pre { max-width: 100%; margin: 0; overflow: auto; color: #d0deeb; font: 11px/1.6 "IBM Plex Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 680px) {
+  .cloud-row:not(.cloud-head) { grid-template-columns: minmax(0, 1fr) 62px 98px; gap: 7px; }
+  .cloud-row:not(.cloud-head) > span:nth-child(3),
+  .cloud-row.cloud-head > span:nth-child(3),
+  .cloud-row.cloud-head > span:last-child { display: none; }
+  .cloud-actions { flex-wrap: nowrap; gap: 0; }
+  .cloud-actions .icon-button { width: 29px; height: 29px; }
+  .cloud-preview-backdrop { padding: 8px; }
+  .cloud-preview-dialog { max-height: 94vh; }
+  .cloud-preview-header { padding: 12px; }
+  .cloud-preview-content { min-height: 180px; padding: 8px; }
+  .cloud-preview-content img { max-height: calc(94vh - 120px); }
+  .cloud-preview-content iframe { height: 78vh; }
 }

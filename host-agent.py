@@ -44,6 +44,26 @@ CADDYFILE = "/etc/caddy/Caddyfile"
 MAX_CLOUD_FILE_SIZE = 20_000_000_000
 CLOUD_UPLOAD_CHUNK_BYTES = 64 * 1024**2
 MAX_CLOUD_UPLOAD_CHUNKS = (MAX_CLOUD_FILE_SIZE + CLOUD_UPLOAD_CHUNK_BYTES - 1) // CLOUD_UPLOAD_CHUNK_BYTES
+MAX_CLOUD_PREVIEW_BYTES = 10 * 1024**2
+MAX_CLOUD_TEXT_PREVIEW_BYTES = 1024 * 1024
+CLOUD_IMAGE_PREVIEW_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".avif": "image/avif",
+    ".ico": "image/x-icon",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+}
+CLOUD_TEXT_PREVIEW_EXTENSIONS = {
+    ".txt", ".md", ".csv", ".tsv", ".log", ".json", ".yaml", ".yml", ".xml",
+    ".html", ".htm", ".css", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".py",
+    ".sh", ".bash", ".ini", ".conf", ".toml", ".properties", ".sql", ".java",
+    ".c", ".h", ".cpp", ".hpp", ".rs", ".go", ".php", ".rb", ".ps1",
+}
 MAX_WEBSITE_UPLOAD = 50 * 1024**2
 MAX_PLUGIN_UPLOAD = 50 * 1024**2
 MAX_LOG_CONTAINERS = 32
@@ -512,6 +532,17 @@ def safe_cloud_path(value):
     return full
 
 
+def cloud_preview_type(path):
+    extension = os.path.splitext(path)[1].lower()
+    if extension in CLOUD_IMAGE_PREVIEW_TYPES:
+        return "image", CLOUD_IMAGE_PREVIEW_TYPES[extension], MAX_CLOUD_PREVIEW_BYTES
+    if extension == ".pdf":
+        return "pdf", "application/pdf", MAX_CLOUD_PREVIEW_BYTES
+    if extension in CLOUD_TEXT_PREVIEW_EXTENSIONS:
+        return "text", "text/plain; charset=utf-8", MAX_CLOUD_TEXT_PREVIEW_BYTES
+    return None
+
+
 def cloud_files():
     result = []
     for root, directories, names in os.walk(CLOUD_ROOT):
@@ -952,6 +983,26 @@ class Handler(BaseHTTPRequestHandler):
         with open(path, "rb") as file:
             shutil.copyfileobj(file, self.wfile)
 
+    def send_cloud_preview(self, path, content_type, size):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(size))
+        # Fetch clients can use the response as a Blob; direct navigation still downloads it.
+        self.send_header("Content-Disposition", "attachment")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Access-Control-Allow-Origin", self.cors_origin())
+        self.send_header("Vary", "Origin")
+        self.end_headers()
+        with open(path, "rb") as file:
+            remaining = size
+            while remaining:
+                chunk = file.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
     def cors_origin(self):
         origin = self.headers.get("Origin", "").rstrip("/")
         return origin if origin in ALLOWED_ORIGINS else "https://tmpserver.com"
@@ -1042,6 +1093,34 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(404, {"error": "file not found"})
                 return
             self.send_file(path)
+            return
+        if parsed.path == "/api/cloud/preview":
+            if not auth_user(self):
+                self.send_json(401, {"error": "authenticated owner session required"})
+                return
+            storage = ensure_cloud_storage()
+            if not storage["available"]:
+                self.send_json(503, {"error": storage["message"], "storage": storage})
+                return
+            path = safe_cloud_path(parse_qs(parsed.query).get("path", [""])[0])
+            if not path or not os.path.isfile(path):
+                self.send_json(404, {"error": "file not found"})
+                return
+            preview = cloud_preview_type(path)
+            if not preview:
+                self.send_json(415, {"error": "Preview is available only for supported image, PDF, and text files."})
+                return
+            _, content_type, size_limit = preview
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                self.send_json(404, {"error": "file not found"})
+                return
+            if size > size_limit:
+                limit_label = "1 MiB" if content_type.startswith("text/") else "10 MiB"
+                self.send_json(413, {"error": f"This file is larger than the {limit_label} preview limit. Download it to view it."})
+                return
+            self.send_cloud_preview(path, content_type, size)
             return
         if self.path == "/api/state":
             if not auth_user(self):

@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   ChevronRight,
   Cloud,
   Download,
+  Eye,
   File,
   FileArchive,
   FileText,
@@ -11,6 +12,7 @@ import {
   FolderPlus,
   HardDrive,
   Image as ImageIcon,
+  LoaderCircle,
   Music2,
   Plus,
   Search,
@@ -35,6 +37,28 @@ const categories: CategoryRow[] = [
   { id: "archives", label: "Archives" },
   { id: "other", label: "Other" },
 ];
+
+type PreviewKind = "image" | "pdf" | "text";
+type CloudPreview =
+  | { file: CloudFile; kind: "image" | "pdf"; url: string }
+  | { file: CloudFile; kind: "text"; text: string };
+
+const CLOUD_PREVIEW_BYTES = 10 * 1024 * 1024;
+const CLOUD_TEXT_PREVIEW_BYTES = 1024 * 1024;
+const IMAGE_PREVIEW_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico", "tif", "tiff"]);
+const TEXT_PREVIEW_EXTENSIONS = new Set(["txt", "md", "csv", "tsv", "log", "json", "yaml", "yml", "xml", "html", "htm", "css", "js", "mjs", "ts", "tsx", "jsx", "py", "sh", "bash", "ini", "conf", "toml", "properties", "sql", "java", "c", "h", "cpp", "hpp", "rs", "go", "php", "rb", "ps1"]);
+
+function previewKind(file: CloudFile): PreviewKind | null {
+  const extension = file.name.split(".").at(-1)?.toLowerCase() ?? "";
+  if (IMAGE_PREVIEW_EXTENSIONS.has(extension)) return "image";
+  if (extension === "pdf") return "pdf";
+  if (TEXT_PREVIEW_EXTENSIONS.has(extension)) return "text";
+  return null;
+}
+
+function previewLimit(kind: PreviewKind) {
+  return kind === "text" ? CLOUD_TEXT_PREVIEW_BYTES : CLOUD_PREVIEW_BYTES;
+}
 
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "—";
@@ -77,15 +101,19 @@ type CloudPanelProps = {
   onCreateFolder: (path: string) => Promise<boolean>;
   onBackup: () => void;
   onDownload: (file: CloudFile) => void;
+  onPreview: (file: CloudFile) => Promise<Blob>;
   onDelete: (file: CloudFile) => void;
 };
 
-export default function CloudPanel({ files, folders, usedBytes, busy, error, storageAvailable, uploadProgress, uploadStatus, onUpload, onCreateFolder, onBackup, onDownload, onDelete }: CloudPanelProps) {
+export default function CloudPanel({ files, folders, usedBytes, busy, error, storageAvailable, uploadProgress, uploadStatus, onUpload, onCreateFolder, onBackup, onDownload, onPreview, onDelete }: CloudPanelProps) {
   const [currentPath, setCurrentPath] = useState("");
   const [category, setCategory] = useState<Category>("all");
   const [query, setQuery] = useState("");
   const [folderDraft, setFolderDraft] = useState("");
   const [folderFormOpen, setFolderFormOpen] = useState(false);
+  const [preview, setPreview] = useState<CloudPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState("");
   const prefix = currentPath ? `${currentPath}/` : "";
   const directFolders = useMemo(() => folders
     .filter(folder => folder.startsWith(prefix) && folder.slice(prefix.length).length > 0 && !folder.slice(prefix.length).includes("/"))
@@ -100,6 +128,37 @@ export default function CloudPanel({ files, folders, usedBytes, busy, error, sto
     ? directFolders.filter(folder => !query || folder.name.toLowerCase().includes(query.toLowerCase()))
     : [];
   const crumbs = currentPath ? currentPath.split("/").map((name, index, segments) => ({ name, path: segments.slice(0, index + 1).join("/") })) : [];
+
+  useEffect(() => {
+    if (!preview || preview.kind === "text") return;
+    return () => URL.revokeObjectURL(preview.url);
+  }, [preview]);
+
+  useEffect(() => {
+    if (!preview) return;
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setPreview(null);
+    }
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [preview]);
+
+  async function openPreview(file: CloudFile) {
+    const kind = previewKind(file);
+    if (!kind || file.size > previewLimit(kind)) return;
+    setPreviewLoading(file.path);
+    setPreviewError("");
+    try {
+      const blob = await onPreview(file);
+      if (blob.size > previewLimit(kind)) throw new Error("This file exceeds the safe preview size limit. Download it to view it.");
+      if (kind === "text") setPreview({ file, kind, text: await blob.text() });
+      else setPreview({ file, kind, url: URL.createObjectURL(blob) });
+    } catch (previewFailure) {
+      setPreviewError(previewFailure instanceof Error ? previewFailure.message : "Could not preview this file.");
+    } finally {
+      setPreviewLoading(null);
+    }
+  }
 
   async function submitFolder(event: React.FormEvent) {
     event.preventDefault();
@@ -118,6 +177,7 @@ export default function CloudPanel({ files, folders, usedBytes, busy, error, sto
         <p className="eyebrow">PRIVATE VM STORAGE</p>
         <h2>My Cloud</h2>
         <p>One secure space for files and folders on your server. Select multiple files at once; each file can be any type up to 20 GB and uploads run sequentially in 64 MiB chunks.</p>
+        <p className="cloud-preview-help">Preview images and PDFs up to 10 MiB, plus text and code files up to 1 MiB. HTML and SVG are never executed in the preview.</p>
         <div className={`cloud-path-note ${storageAvailable === true ? "ready" : storageAvailable === false ? "unavailable" : ""}`}><HardDrive size={13} /><span>{storageAvailable === true ? <>HDD verified · <code>/opt/tmpserver/cloud</code> is bound to the external drive</> : storageAvailable === false ? "External HDD unavailable · Cloud is blocked and will not fall back to the system disk" : "HDD status not verified · Cloud operations remain disabled"} · website ZIP publishing stays separate</span></div>
       </div>
       <div className="cloud-hero-actions">
@@ -139,11 +199,22 @@ export default function CloudPanel({ files, folders, usedBytes, busy, error, sto
       <div className="cloud-current-path"><div><p className="eyebrow">{currentPath ? "CURRENT FOLDER" : "ROOT FOLDER"}</p><h3>{currentPath.split("/").at(-1) || "My Cloud"}</h3></div><span>{visibleFolders.length} folder{visibleFolders.length === 1 ? "" : "s"} · {visibleFiles.length} file{visibleFiles.length === 1 ? "" : "s"}</span></div>
       <div className="cloud-table cloud-drive-table"><div className="cloud-row cloud-head"><span>NAME</span><span>SIZE</span><span>MODIFIED</span><span /></div>
         {visibleFolders.map(folder => <div className="cloud-row cloud-folder-row" key={folder.path}><button className="cloud-name cloud-folder-name" onClick={() => { setCurrentPath(folder.path); setCategory("all"); setQuery(""); }}><Folder size={17} />{folder.name}<ChevronRight size={14} className="cloud-folder-open" /></button><span>Folder</span><span>—</span><span /></div>)}
-        {visibleFiles.map(file => { const Icon = fileIcon(file); return <div className="cloud-row" key={file.path}><span className="cloud-name"><Icon size={16} />{file.name}</span><span>{formatBytes(file.size)}</span><span>{new Date(file.modified * 1000).toLocaleString()}</span><span className="cloud-actions"><button className="icon-button" title="Download" aria-label={`Download ${file.name}`} onClick={() => onDownload(file)} disabled={storageAvailable !== true}><Download size={15} /></button><button className="icon-button" title="Delete" aria-label={`Delete ${file.name}`} onClick={() => onDelete(file)} disabled={busy || storageAvailable !== true}><Trash2 size={15} /></button></span></div>; })}
+        {visibleFiles.map(file => { const Icon = fileIcon(file); const kind = previewKind(file); const tooLarge = kind !== null && file.size > previewLimit(kind); return <div className="cloud-row" key={file.path}><span className="cloud-name"><Icon size={16} />{file.name}</span><span>{formatBytes(file.size)}</span><span>{new Date(file.modified * 1000).toLocaleString()}</span><span className="cloud-actions">{kind && <button className="icon-button" title={tooLarge ? "File exceeds the preview limit" : "Preview"} aria-label={`Preview ${file.name}`} onClick={() => void openPreview(file)} disabled={storageAvailable !== true || tooLarge || previewLoading === file.path}>{previewLoading === file.path ? <LoaderCircle size={15} className="cloud-preview-spin" /> : <Eye size={15} />}</button>}<button className="icon-button" title="Download" aria-label={`Download ${file.name}`} onClick={() => onDownload(file)} disabled={storageAvailable !== true}><Download size={15} /></button><button className="icon-button" title="Delete" aria-label={`Delete ${file.name}`} onClick={() => onDelete(file)} disabled={busy || storageAvailable !== true}><Trash2 size={15} /></button></span></div>; })}
         {!visibleFolders.length && !visibleFiles.length && <div className="cloud-empty"><Cloud size={24} /><p>{storageAvailable !== true ? "Cloud contents are hidden until the external HDD and bind mount are verified." : query ? "No matching files or folders." : category === "folders" ? "This folder has no subfolders." : category === "all" && !currentPath ? "Your Cloud is ready. Create a folder or upload any file type." : `No ${category === "all" ? "files" : category} here yet.`}</p></div>}
       </div>
       <div className="cloud-drive-footer"><span>{files.length} files · {folders.length} folders across Cloud</span><span>Uploads replace same-path files only after confirmation.</span></div>
     </div>
     <p className="route-help">Minecraft rolling backups stay in this Cloud storage, and website deployments remain a separate ZIP-only feature. Deleting a file removes it from host storage after confirmation.</p>
+    {previewError && <div className="cloud-preview-error" role="alert"><span>{previewError}</span><button className="icon-button" onClick={() => setPreviewError("")} aria-label="Dismiss preview error"><X size={15} /></button></div>}
+    {preview && <div className="cloud-preview-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setPreview(null); }}>
+      <section className="cloud-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-preview-title">
+        <header className="cloud-preview-header"><div><p className="eyebrow">PRIVATE CLOUD PREVIEW</p><h2 id="cloud-preview-title">{preview.file.name}</h2><span>{formatBytes(preview.file.size)} · {preview.kind === "text" ? "plain text" : preview.kind === "pdf" ? "PDF document" : "image"}</span></div><button className="icon-button" onClick={() => setPreview(null)} aria-label="Close preview"><X size={18} /></button></header>
+        <div className={`cloud-preview-content ${preview.kind === "text" ? "text-preview" : ""}`}>
+          {preview.kind === "image" && <img src={preview.url} alt={preview.file.name} />}
+          {preview.kind === "pdf" && <iframe title={`PDF preview: ${preview.file.name}`} src={preview.url} sandbox="allow-scripts" referrerPolicy="no-referrer" />}
+          {preview.kind === "text" && <pre>{preview.text}</pre>}
+        </div>
+      </section>
+    </div>}
   </section>;
 }
