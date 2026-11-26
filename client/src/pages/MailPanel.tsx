@@ -683,7 +683,16 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
 
     {isConnected && <>
       <div className="mail-account-bar"><div className="mail-account-ident"><span className="mail-account-avatar" aria-hidden="true">{(status.email || "G").charAt(0).toUpperCase()}</span><span><strong>{status.email || "Connected Google account"}</strong><small>Connected securely through TMP Server</small></span></div>
-        <div className="mail-account-actions"><button type="button" className="button secondary" onClick={() => { setReplyThread(null); setRecipient(""); setSubject(""); setBody(""); setComposeOpen(true); setSelected(null); setError(""); }}><MailPlus size={14} /> Compose</button><button type="button" className="mail-disconnect" onClick={() => void disconnect()} disabled={busy}>Disconnect</button></div>
+      <div className="mail-account-actions">
+  	<button type="button" className="button secondary" onClick={() => { setReplyThread(null); setRecipient(""); setSubject(""); setBody(""); setComposeOpen(true); setSelected(null); setError(""); }}>
+    	  <MailPlus size={14} /> Compose
+  	</button>
+  	<button type="button" className="button secondary" onClick={connect} disabled={busy}>
+    	  <ShieldCheck size={14} /> Re-authorise Google
+  	</button>
+  	<button type="button" className="mail-disconnect" onClick={() => void disconnect()} disabled={busy}>
+   	  Disconnect
+  	</button>
       </div>
 
       <div className="mail-workspace">
