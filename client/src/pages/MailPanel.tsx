@@ -10,6 +10,7 @@ import {
   Mail,
   MailPlus,
   RefreshCw,
+  Reply,
   Search,
   Send,
   ShieldCheck,
@@ -49,7 +50,8 @@ type GoogleIdentity = {
 type GmailHeader = { name: string; value: string };
 type GmailPart = {
   mimeType?: string;
-  body?: { data?: string; size?: number };
+  headers?: GmailHeader[];
+  body?: { data?: string; size?: number; attachmentId?: string };
   parts?: GmailPart[];
 };
 type GmailMessageResponse = {
@@ -69,7 +71,14 @@ type MailMessage = {
   plainText: string;
   html: string;
   unread: boolean;
+  starred: boolean;
+  threadId: string;
+  messageId: string;
+  references: string;
+  replyTo: string;
+  images: InlineImage[];
 };
+type InlineImage = { cid: string; mimeType: string; attachmentId?: string; data?: string };
 type MailFolder = "INBOX" | "SENT" | "STARRED";
 
 type MemoryToken = { value: string; expiresAt: number };
@@ -153,6 +162,19 @@ function htmlToText(html: string): string {
   return documentNode.body.textContent?.replace(/[\t\u00a0 ]+\n/g, "\n").trim() ?? "";
 }
 
+function inlineImages(part: GmailPart | undefined): InlineImage[] {
+  if (!part) return [];
+  const out: InlineImage[] = [];
+  const raw = part.headers?.find(h => h.name.toLowerCase() === "content-id")?.value ?? "";
+  const cid = raw.replace(/^<|>$/g, "").trim();
+  const mime = part.mimeType ?? "";
+  if (cid && mime.toLowerCase().startsWith("image/") && (part.body?.attachmentId || part.body?.data)) {
+    out.push({ cid, mimeType: mime, attachmentId: part.body?.attachmentId, data: part.body?.data });
+  }
+  for (const child of part.parts ?? []) out.push(...inlineImages(child));
+  return out;
+}
+
 function headerValue(headers: GmailHeader[] | undefined, name: string): string {
   return headers?.find(header => header.name.toLowerCase() === name.toLowerCase())?.value ?? "";
 }
@@ -170,6 +192,12 @@ function makeMessage(item: GmailMessageResponse): MailMessage {
     date: Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toISOString() : "",
     plainText,
     html: parts.html.join("<br>"),
+    starred: item.labelIds?.includes("STARRED") ?? false,
+    threadId: item.threadId ?? "",
+    messageId: headerValue(headers, "Message-ID").replace(/[\r\n]+/g, " ").trim(),
+    references: headerValue(headers, "References").replace(/[\r\n]+/g, " ").trim(),
+    replyTo: headerValue(headers, "Reply-To"),
+    images: inlineImages(item.payload as GmailPart | undefined),
     unread: item.labelIds?.includes("UNREAD") ?? false,
   };
 }
@@ -231,12 +259,13 @@ function wrapBase64(value: string): string {
   return value.match(/.{1,76}/g)?.join("\r\n") ?? "";
 }
 
-function makeRawMessage(to: string, subject: string, body: string): string {
+function makeRawMessage(to: string, subject: string, body: string, extra: string[] = []): string {
   const normalizedBody = body.replace(/\r\n|\r|\n/g, "\r\n");
   const bodyBase64 = wrapBase64(base64Utf8(normalizedBody));
   const mime = [
     `To: ${to}`,
     encodeHeader(subject),
+    ...extra,
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: base64",
@@ -285,6 +314,7 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
   const [recipient, setRecipient] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [replyThread, setReplyThread] = useState<{ threadId: string; inReplyTo: string; references: string } | null>(null);
   const tokenRef = useRef<MemoryToken | null>(null);
   const pendingTokenRef = useRef<Promise<string> | null>(null);
   const requestRef = useRef(request);
@@ -440,7 +470,7 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
     try {
       const codeClient = identity.accounts.oauth2.initCodeClient({
         client_id: clientId.trim(),
-        scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send",
+        scope: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.modify",
         ux_mode: "popup",
         callback: response => {
           if (response.error || !response.code) {
@@ -528,13 +558,14 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
       const response = await gmailFetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ raw: makeRawMessage(cleanRecipient, cleanSubject, body) }),
+        body: JSON.stringify({ raw: makeRawMessage(cleanRecipient, cleanSubject, body, replyThread?.inReplyTo ? [`In-Reply-To: ${replyThread.inReplyTo}`, `References: ${replyThread.references}`] : []), ...(replyThread?.threadId ? { threadId: replyThread.threadId } : {}) }),
       });
       if (!response.ok) throw new Error(`Gmail could not send this message (HTTP ${response.status}). Check the connection and try again.`);
       setRecipient("");
       setSubject("");
       setBody("");
       setComposeOpen(false);
+      setReplyThread(null);
       setNotice("Message sent successfully.");
       if (folder === "SENT") void loadMessages("SENT", activeQuery);
     } catch (cause) {
@@ -550,11 +581,67 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
     setNotice("");
   };
 
+  const toggleStar = async (message: MailMessage) => {
+    const next = !message.starred;
+    const apply = (value: boolean) => {
+      setMessages(current => current.map(item => item.id === message.id ? { ...item, starred: value } : item));
+      setSelected(current => current && current.id === message.id ? { ...current, starred: value } : current);
+    };
+    apply(next);
+    try {
+      const response = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(message.id)}/modify`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(next ? { addLabelIds: ["STARRED"] } : { removeLabelIds: ["STARRED"] }),
+      });
+      if (!response.ok) throw new Error(response.status === 403 ? "Starring needs the Gmail modify permission. Disconnect, reconnect Google and tick every box." : `Gmail could not update the star (HTTP ${response.status}).`);
+    } catch (cause) {
+      apply(!next);
+      setError(safeErrorMessage(cause, "Unable to update the star."));
+    }
+  };
+
+  const startReply = (message: MailMessage) => {
+    const source = message.replyTo || message.sender;
+    const match = source.match(/<([^>]+)>/);
+    const address = (match ? match[1] : source).trim();
+    const quoted = message.plainText.split("\n").map(line => `> ${line}`).join("\n");
+    setRecipient(address);
+    setSubject(/^re:/i.test(message.subject) ? message.subject : `Re: ${message.subject}`);
+    setBody(`\n\nOn ${formatDate(message.date)}, ${message.sender} wrote:\n${quoted}`);
+    setReplyThread({ threadId: message.threadId, inReplyTo: message.messageId, references: [message.references, message.messageId].filter(Boolean).join(" ") });
+    setComposeOpen(true);
+    setSelected(null);
+    setError("");
+  };
+
+  const resolveInlineImages = async (message: MailMessage) => {
+    try {
+      let html = message.html;
+      for (const image of message.images) {
+        let data = image.data;
+        if (!data && image.attachmentId) {
+          const response = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(image.attachmentId)}`);
+          if (!response.ok) continue;
+          data = (await responseJson<{ data?: string }>(response)).data;
+        }
+        if (!data) continue;
+        let b64 = data.replace(/-/g, "+").replace(/_/g, "/");
+        b64 += "=".repeat((4 - b64.length % 4) % 4);
+        html = html.split(`cid:${image.cid}`).join(`data:${image.mimeType};base64,${b64}`);
+      }
+      setSelected(current => current && current.id === message.id ? { ...current, html } : current);
+    } catch {
+      // Leave the message as-is if inline images fail.
+    }
+  };
+
   const openMessage = (message: MailMessage) => {
     setSelected(message);
     if (message.unread) {
       setMessages(current => current.map(item => item.id === message.id ? { ...item, unread: false } : item));
     }
+    if (message.html && message.images.length) void resolveInlineImages(message);
   };
 
   const isConfigured = status?.configured === true;
@@ -594,7 +681,7 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
 
     {isConnected && <>
       <div className="mail-account-bar"><div className="mail-account-ident"><span className="mail-account-avatar" aria-hidden="true">{(status.email || "G").charAt(0).toUpperCase()}</span><span><strong>{status.email || "Connected Google account"}</strong><small>Connected securely through TMP Server</small></span></div>
-        <div className="mail-account-actions"><button type="button" className="button secondary" onClick={() => { setComposeOpen(true); setSelected(null); setError(""); }}><MailPlus size={14} /> Compose</button><button type="button" className="mail-disconnect" onClick={() => void disconnect()} disabled={busy}>Disconnect</button></div>
+        <div className="mail-account-actions"><button type="button" className="button secondary" onClick={() => { setReplyThread(null); setRecipient(""); setSubject(""); setBody(""); setComposeOpen(true); setSelected(null); setError(""); }}><MailPlus size={14} /> Compose</button><button type="button" className="mail-disconnect" onClick={() => void disconnect()} disabled={busy}>Disconnect</button></div>
       </div>
 
       <div className="mail-workspace">
@@ -613,7 +700,7 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
             <label className="mail-compose-field mail-compose-body">Message<textarea value={body} onChange={event => setBody(event.target.value)} rows={12} placeholder="Write a plain-text message…" /></label>
             <div className="mail-compose-footer"><span>Plain text only · one recipient</span><button className="button primary" type="submit" disabled={busy}><Send size={14} /> {busy ? "Sending…" : "Send"}</button></div>
           </form> : selected ? <article className="mail-reading" aria-labelledby="mail-reading-subject">
-            <div className="mail-reading-toolbar"><button type="button" className="mail-back" onClick={() => setSelected(null)}><ArrowLeft size={15} /> Back to {folder === "INBOX" ? "Inbox" : folder === "SENT" ? "Sent" : "Starred"}</button><span>{formatDate(selected.date)}</span></div>
+            <div className="mail-reading-toolbar"><button type="button" className="mail-back" onClick={() => setSelected(null)}><ArrowLeft size={15} /> Back to {folder === "INBOX" ? "Inbox" : folder === "SENT" ? "Sent" : "Starred"}</button><span style={{ display: "flex", gap: 8, alignItems: "center" }}><button type="button" className="button secondary" onClick={() => startReply(selected)}><Reply size={14} /> Reply</button><button type="button" className="icon-button" aria-label={selected.starred ? "Remove star" : "Star message"} style={{ color: selected.starred ? "#f4b400" : undefined }} onClick={() => void toggleStar(selected)}><Star size={16} fill={selected.starred ? "currentColor" : "none"} /></button><span>{formatDate(selected.date)}</span></span></div>
             <h2 id="mail-reading-subject" className="mail-reading-subject">{selected.subject}</h2>
             <div className="mail-message-meta"><span className="mail-sender-avatar" aria-hidden="true">{selected.sender.charAt(0).toUpperCase()}</span><div><strong>{selected.sender}</strong>{selected.recipient && <small>to {selected.recipient}</small>}</div><time dateTime={selected.date || undefined}>{formatDate(selected.date)}</time></div>
             {selected.html ? <iframe title="Message content" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={emailFrameDoc(selected.html)} style={{ width: "100%", height: "70vh", border: 0, background: "#fff", borderRadius: 8 }} /> : <div className="mail-message-body">{selected.plainText ? selected.plainText : <span className="mail-no-body">This message has no readable content.</span>}</div>}
@@ -624,7 +711,7 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
               {listLoading ? <div className="mail-empty"><LoaderCircle size={21} className="mail-spin" /><p>Loading messages from Google…</p></div>
                 : error && !messages.length ? <div className="mail-empty"><CircleAlert size={22} /><p>Messages could not be loaded. Review the alert above or retry.</p><button className="button secondary" type="button" onClick={() => void loadMessages(folder, activeQuery)}>Try again</button></div>
                   : messages.length ? messages.map(message => <button className={`mail-message-row ${message.unread ? "unread" : ""}`} type="button" key={message.id} onClick={() => openMessage(message)} aria-label={`Read ${message.subject} from ${message.sender}`}>
-                    <span className="mail-row-icon" aria-hidden="true"><Mail size={16} /></span><span className="mail-row-main"><strong>{message.sender}</strong><span className="mail-row-subject">{message.subject}</span><span className="mail-row-preview">{message.plainText.replace(/\s+/g, " ").slice(0, 150)}</span></span><time dateTime={message.date || undefined}>{formatDate(message.date, true)}</time><ChevronRight size={15} className="mail-row-chevron" aria-hidden="true" />
+                    <span className="mail-row-icon" aria-hidden="true"><Mail size={16} /></span><span className="mail-row-main"><strong>{message.sender}</strong><span className="mail-row-subject">{message.subject}</span><span className="mail-row-preview">{message.plainText.replace(/\s+/g, " ").slice(0, 150)}</span></span><span role="button" tabIndex={0} aria-label={message.starred ? "Remove star" : "Star message"} style={{ color: message.starred ? "#f4b400" : undefined, display: "inline-flex", padding: 4, cursor: "pointer" }} onClick={event => { event.stopPropagation(); void toggleStar(message); }} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); void toggleStar(message); } }}><Star size={16} fill={message.starred ? "currentColor" : "none"} /></span><time dateTime={message.date || undefined}>{formatDate(message.date, true)}</time><ChevronRight size={15} className="mail-row-chevron" aria-hidden="true" />
                   </button>)
                     : <div className="mail-empty"><Mail size={25} /><strong>{activeQuery ? "No matching messages" : `No messages in ${folder === "INBOX" ? "Inbox" : folder === "SENT" ? "Sent" : "Starred"}`}</strong><p>{activeQuery ? "Try different search terms or clear the search." : "When messages are available, they will appear here."}</p></div>}
             </div>
