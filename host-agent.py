@@ -300,7 +300,9 @@ class GmailStorageError(Exception):
 
 
 class GmailProviderError(Exception):
-    pass
+    def __init__(self, message, diagnostic="provider error"):
+        super().__init__(message)
+        self.diagnostic = diagnostic
 
 
 def gmail_diagnostic(event):
@@ -436,16 +438,29 @@ def gmail_provider_json(url, data=None, headers=None):
     try:
         with urlopen(request, timeout=12) as response:
             raw = response.read(65537)
-    except (HTTPError, URLError, TimeoutError, OSError) as error:
-        raise GmailProviderError("Google could not complete the Gmail authorization request.") from error
+    except HTTPError as error:
+        diagnostic = f"Google HTTP {error.code}"
+        try:
+            provider_error = json.loads(error.read(65537)).get("error")
+            if isinstance(provider_error, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", provider_error):
+                diagnostic += f" ({provider_error})"
+            elif isinstance(provider_error, dict):
+                status = provider_error.get("status")
+                if isinstance(status, str) and re.fullmatch(r"[A-Z_]{1,64}", status):
+                    diagnostic += f" ({status})"
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            pass
+        raise GmailProviderError("Google could not complete the Gmail authorization request.", diagnostic) from error
+    except (URLError, TimeoutError, OSError) as error:
+        raise GmailProviderError("Google could not complete the Gmail authorization request.", "Google network request failed") from error
     if len(raw) > 65536:
-        raise GmailProviderError("Google returned an invalid authorization response.")
+        raise GmailProviderError("Google returned an invalid authorization response.", "Google response exceeded the size limit")
     try:
         result = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise GmailProviderError("Google returned an invalid authorization response.") from error
+        raise GmailProviderError("Google returned an invalid authorization response.", "Google returned invalid JSON") from error
     if not isinstance(result, dict):
-        raise GmailProviderError("Google returned an invalid authorization response.")
+        raise GmailProviderError("Google returned an invalid authorization response.", "Google response had an unexpected shape")
     return result
 
 
@@ -455,9 +470,17 @@ def gmail_exchange_code(code, redirect_uri, config):
     result = gmail_provider_json("https://oauth2.googleapis.com/token", data, {"Content-Type": "application/x-www-form-urlencoded"})
     access_token = result.get("access_token")
     refresh_token = result.get("refresh_token")
-    scopes = result.get("scope", "").split()
+    scope_value = result.get("scope", "")
+    scopes = scope_value.split() if isinstance(scope_value, str) else []
     if not isinstance(access_token, str) or not access_token or not isinstance(refresh_token, str) or not refresh_token or set(scopes) != GMAIL_SCOPES:
-        raise GmailProviderError("Google did not grant the required Gmail access.")
+        missing = []
+        if not isinstance(access_token, str) or not access_token:
+            missing.append("access token")
+        if not isinstance(refresh_token, str) or not refresh_token:
+            missing.append("refresh token")
+        if set(scopes) != GMAIL_SCOPES:
+            missing.append("required scopes")
+        raise GmailProviderError("Google did not grant the required Gmail access.", "Google response missing " + ", ".join(missing))
     profile = gmail_provider_json("https://gmail.googleapis.com/gmail/v1/users/me/profile", headers={"Authorization": f"Bearer {access_token}"})
     email = profile.get("emailAddress")
     if not isinstance(email, str) or not email:
@@ -1211,8 +1234,11 @@ class Handler(BaseHTTPRequestHandler):
                         self.send_json(403, {"error": "The Google account must match the authenticated owner account."})
                         return
                     gmail_write_token(refresh_token, email, scopes)
-                except GmailProviderError:
-                    gmail_diagnostic("exchange failed: Google authorization response")
+                except GmailProviderError as error:
+                    diagnostic = error.diagnostic
+                    if not re.fullmatch(r"[A-Za-z0-9 (),:_-]{1,180}", diagnostic):
+                        diagnostic = "Google authorization failed with an unclassified provider error"
+                    gmail_diagnostic(f"exchange failed: {diagnostic}")
                     self.send_json(502, {"error": "Google could not verify the Gmail authorization."})
                     return
                 except GmailStorageError:
