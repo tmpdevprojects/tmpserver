@@ -5,8 +5,10 @@ export default {
   async fetch(request) {
     const incoming = new URL(request.url);
     const upstream = new URL(`${incoming.pathname}${incoming.search}`, UPSTREAM);
+    const isHtmlRequest = ["GET", "HEAD"].includes(request.method) && (request.headers.get("accept") || "").toLowerCase().includes("text/html");
     const headers = new Headers();
     for (const name of FORWARDED_HEADERS) {
+      if (isHtmlRequest && (name === "if-none-match" || name === "if-modified-since")) continue;
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
     }
@@ -17,6 +19,10 @@ export default {
     const responseHeaders = new Headers(response.headers);
     responseHeaders.set("X-Robots-Tag", "noindex, nofollow");
     responseHeaders.set("Referrer-Policy", "same-origin");
+    if (isHtmlRequest && (responseHeaders.get("content-type") || "").toLowerCase().includes("text/html")) {
+      responseHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+      responseHeaders.delete("Expires");
+    }
 
     const location = responseHeaders.get("Location");
     if (location) {
