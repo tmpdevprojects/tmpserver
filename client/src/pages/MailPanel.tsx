@@ -18,12 +18,15 @@ import {
   X,
 } from "lucide-react";
 
+import TMPMailWorkspace from "@/pages/TMPMailWorkspace";
+
 type MailPanelProps = {
   request: (path: string, init?: RequestInit) => Promise<Response>;
   ownerEmail: string;
+  variant?: "compact" | "workspace";
 };
 
-type GmailStatus = {
+export type GmailStatus = {
   configured: boolean;
   connected: boolean;
   email?: string;
@@ -63,7 +66,7 @@ type GmailMessageResponse = {
   snippet?: string;
   payload?: { headers?: GmailHeader[]; mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 };
-type MailMessage = {
+export type MailMessage = {
   id: string;
   sender: string;
   recipient: string;
@@ -80,7 +83,15 @@ type MailMessage = {
   images: InlineImage[];
 };
 type InlineImage = { cid: string; mimeType: string; attachmentId?: string; data?: string };
-type MailFolder = "INBOX" | "SENT" | "STARRED";
+export type GmailLabel = {
+  id: string;
+  name: string;
+  type?: "system" | "user";
+  messagesUnread?: number;
+  messagesTotal?: number;
+};
+
+export type MailFolder = string;
 
 type MemoryToken = { value: string; expiresAt: number };
 
@@ -296,7 +307,7 @@ function requestErrorMessage(error: unknown, endpoint: string, fallback: string)
   return safeErrorMessage(error, fallback);
 }
 
-export default function MailPanel({ request, ownerEmail }: { request: (path: string, init?: RequestInit) => Promise<Response>; ownerEmail: string }) {
+export default function MailPanel({ request, ownerEmail, variant = "compact" }: MailPanelProps) {
   const [status, setStatus] = useState<GmailStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [oauthReady, setOauthReady] = useState(false);
@@ -307,6 +318,9 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
   const [searchDraft, setSearchDraft] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
   const [messages, setMessages] = useState<MailMessage[]>([]);
+  const [labels, setLabels] = useState<GmailLabel[]>([]);
+  const [labelsLoading, setLabelsLoading] = useState(false);
+  const [labelsError, setLabelsError] = useState("");
   const [listLoading, setListLoading] = useState(false);
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -335,6 +349,8 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
         tokenRef.current = null;
         pendingTokenRef.current = null;
         setMessages([]);
+        setLabels([]);
+        setLabelsError("");
         setSelected(null);
       }
       return payload;
@@ -410,6 +426,23 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
     return response;
   }, [getAccessToken]);
 
+  const loadLabels = useCallback(async () => {
+    if (!status?.connected) return;
+    setLabelsLoading(true);
+    setLabelsError("");
+    try {
+      const response = await gmailFetch("https://gmail.googleapis.com/gmail/v1/users/me/labels");
+      if (!response.ok) throw new Error(`Gmail could not load labels (HTTP ${response.status}).`);
+      const payload = await responseJson<{ labels?: GmailLabel[] }>(response);
+      setLabels((payload.labels ?? []).filter(label => typeof label.id === "string" && typeof label.name === "string"));
+    } catch (cause) {
+      setLabels([]);
+      setLabelsError(safeErrorMessage(cause, "Unable to load Gmail labels."));
+    } finally {
+      setLabelsLoading(false);
+    }
+  }, [gmailFetch, status?.connected]);
+
   const loadMessages = useCallback(async (nextFolder = folder, query = activeQuery, pageToken?: string) => {
     if (!status?.connected) return;
     const append = Boolean(pageToken);
@@ -423,7 +456,12 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
     setError("");
     setNotice("");
     try {
-      const params = new URLSearchParams({ maxResults: "50", labelIds: nextFolder });
+      const params = new URLSearchParams({ maxResults: "50" });
+      if (nextFolder !== "ALL") {
+        const folderLabels = nextFolder.startsWith("CATEGORY_") ? ["INBOX", nextFolder] : [nextFolder];
+        folderLabels.forEach(labelId => params.append("labelIds", labelId));
+      }
+      if (nextFolder === "SPAM" || nextFolder === "TRASH") params.set("includeSpamTrash", "true");
       if (query.trim()) params.set("q", query.trim());
       if (pageToken) params.set("pageToken", pageToken);
       const listResponse = await gmailFetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params.toString()}`);
@@ -454,6 +492,10 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
   useEffect(() => {
     if (status?.connected) void loadMessages(folder, activeQuery);
   }, [status?.connected, folder, activeQuery, loadMessages]);
+
+  useEffect(() => {
+    if (variant === "workspace" && status?.connected) void loadLabels();
+  }, [variant, status?.connected, loadLabels]);
 
   const connect = () => {
     setError("");
@@ -539,6 +581,12 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
     event.preventDefault();
     setSelected(null);
     setActiveQuery(searchDraft.trim());
+  };
+
+  const runSearch = (query: string) => {
+    setSearchDraft(query);
+    setSelected(null);
+    setActiveQuery(query.trim());
   };
 
   const submitCompose = async (event: FormEvent) => {
@@ -649,6 +697,59 @@ export default function MailPanel({ request, ownerEmail }: { request: (path: str
   const isConfigured = status?.configured === true;
   const isConnected = status?.connected === true;
   const unavailable = !statusLoading && status !== null && (!isConfigured || !isConnected);
+
+  if (variant === "workspace") {
+    return <TMPMailWorkspace
+      ownerEmail={ownerEmail}
+      status={status}
+      statusLoading={statusLoading}
+      clientIdReady={Boolean(clientId?.trim())}
+      isConfigured={isConfigured}
+      isConnected={isConnected}
+      busy={busy}
+      error={error}
+      notice={notice}
+      folder={folder}
+      labels={labels}
+      labelsLoading={labelsLoading}
+      labelsError={labelsError}
+      messages={messages}
+      listLoading={listLoading}
+      nextPageToken={nextPageToken}
+      loadingMore={loadingMore}
+      selected={selected}
+      searchDraft={searchDraft}
+      activeQuery={activeQuery}
+      composeOpen={composeOpen}
+      recipient={recipient}
+      subject={subject}
+      body={body}
+      setSearchDraft={setSearchDraft}
+      setComposeOpen={setComposeOpen}
+      setRecipient={setRecipient}
+      setSubject={setSubject}
+      setBody={setBody}
+      onSearch={runSearch}
+      onChooseFolder={chooseFolder}
+      onRefresh={() => {
+        void loadStatus();
+        if (status?.connected) {
+          void loadMessages(folder, activeQuery);
+          void loadLabels();
+        }
+      }}
+      onLoadMore={() => { if (nextPageToken) void loadMessages(folder, activeQuery, nextPageToken); }}
+      onOpenMessage={openMessage}
+      onBackToList={() => setSelected(null)}
+      onStartReply={startReply}
+      onToggleStar={message => { void toggleStar(message); }}
+      onConnect={connect}
+      onDisconnect={() => { void disconnect(); }}
+      onSubmitCompose={submitCompose}
+      onDismissError={() => setError("")}
+      onDismissNotice={() => setNotice("")}
+    />;
+  }
 
   return <section className="mail-page" aria-labelledby="mail-page-title">
     <header className="mail-hero">

@@ -88,7 +88,7 @@ export default function TMPMail() {
 
   const ownerSession = isOwnerSession(session);
 
-  return <div className="tm-mail-app">
+  return <div className={`tm-mail-app${ownerSession ? " tm-mail-app-open" : ""}`}>
     <header className="tm-mail-topbar">
       <a className="tm-mail-brand" href="https://tmpserver.com/" aria-label="TMP Server dashboard">
         <span className="tm-mail-brand-mark"><Mail size={18} /></span>
@@ -107,7 +107,7 @@ export default function TMPMail() {
         <h1>Private mailbox access is unavailable.</h1>
         <p>Supabase owner-auth settings are missing from this build. No mailbox data is loaded until the owner session is verified.</p>
       </section> : checking ? <div className="tm-mail-loading" role="status"><LoaderCircle size={19} className="mail-spin" /> Checking the owner session…</div>
-        : ownerSession ? <MailPanel request={request} ownerEmail={ownerEmail} />
+        : ownerSession ? <MailPanel request={request} ownerEmail={ownerEmail} variant="workspace" />
           : <section className="tm-mail-auth-card" aria-labelledby="tm-mail-auth-title">
             <span className="tm-mail-lock"><LockKeyhole size={22} /></span>
             <p className="eyebrow">TMP MAIL / OWNER ACCESS</p>
