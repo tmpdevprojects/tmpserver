@@ -126,9 +126,41 @@ def geyser_address_state(config_path: Path) -> tuple[str, list[str]]:
     current_value = value_of(address_match.group("rest"))
     if re.fullmatch(r"\[\s*\]", current_value):
         return "needs_update", lines
-    if re.search(r"(?<![A-Za-z0-9.-])" + re.escape(DOMAIN) + r"(?![A-Za-z0-9.-])", current_value):
+
+    addresses: list[str] = []
+    if current_value.startswith("[") and current_value.endswith("]"):
+        addresses = [item.strip() for item in current_value[1:-1].split(",") if item.strip()]
+    elif current_value:
+        addresses = [current_value]
+    else:
+        address_indent = len(address_match.group("indent"))
+        for index in range(address_index + 1, signaling_end):
+            line = lines[index]
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            item_match = re.match(r"^(?P<indent> *)-\s*(?P<item>.*?)(?:\r?\n)?$", line)
+            if item_match and len(item_match.group("indent")) >= address_indent:
+                item = item_match.group("item").split("#", 1)[0].strip()
+                if item:
+                    addresses.append(item)
+                continue
+            key_match = KEY_RE.match(line)
+            if key_match and len(key_match.group("indent")) <= address_indent:
+                break
+            if key_match or item_match:
+                continue
+            raise SafeStop("Geyser advertise-addresses uses an unfamiliar YAML structure; no changes were made.")
+
+    normalized = [item.strip().strip("\"'") for item in addresses]
+    target_values = {DOMAIN, f"{DOMAIN}:{PORT}"}
+    wrong_port = any(item.startswith(DOMAIN + ":") and item not in target_values for item in normalized)
+    if len(normalized) == 1 and normalized[0] in target_values:
         return "already_set", lines
-    raise SafeStop("Geyser already has a non-empty custom advertise-addresses value; refusing to overwrite it.")
+    if wrong_port:
+        return "wrong_port", lines
+    if not normalized:
+        return "needs_update", lines
+    return "custom", lines
 
 
 def get_ports_and_version() -> tuple[str, str]:
@@ -299,7 +331,13 @@ def main() -> int:
         print(f"Geyser transport/port: nethernet/{PORT}")
         print(f"Container port mappings: {ports}")
         print(f"Geyser plugin version: {geyser_version}")
-        print(f"Advertised address setting: {'already includes ' + DOMAIN if state == 'already_set' else 'empty; eligible for the targeted fix'}")
+        address_status = {
+            "already_set": f"{DOMAIN}:{PORT} is already configured",
+            "needs_update": "empty; eligible for the targeted fix",
+            "wrong_port": "the public domain is set to a different port; no automatic change",
+            "custom": "a non-empty custom list is present; no automatic change",
+        }
+        print(f"Advertised address setting: {address_status[state]}")
         show_dns()
 
         if args.check:
@@ -309,6 +347,8 @@ def main() -> int:
             print("No change made: play.tmpserver.com is already advertised. Paper was not restarted.")
             print("Next, collect the fresh Geyser startup/error lines; this helper will not overwrite an existing custom address list.")
             return 0
+        if state != "needs_update":
+            raise SafeStop("Refusing to overwrite the existing Geyser advertised-address list; no changes or restart were made.")
 
         snapshot = snapshot_before_restart()
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
