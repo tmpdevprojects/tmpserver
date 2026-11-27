@@ -534,6 +534,44 @@ table { width: 100%; border-collapse: collapse; min-width: 720px; } th { color: 
 .cloud-preview-content iframe { width: 100%; height: min(75vh, 760px); border: 0; background: #fff; }
 .cloud-preview-content.text-preview { display: block; }
 .cloud-preview-content pre { max-width: 100%; margin: 0; overflow: auto; color: #d0deeb; font: 11px/1.6 "IBM Plex Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Dedicated, owner-only TMP Mail origin. */
+.tm-mail-app { min-height: 100vh; color: #dbe6f2; background: radial-gradient(ellipse at 70% -20%, #153144 0, transparent 43%), #0b1119; }
+.tm-mail-topbar { min-height: 70px; padding: 0 clamp(16px, 4vw, 48px); display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #243344; background: #0d141d; }
+.tm-mail-brand { display: inline-flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
+.tm-mail-brand-mark { width: 38px; height: 38px; display: grid; place-items: center; color: #72def5; background: #102b38; border: 1px solid #28566a; border-radius: 10px; }
+.tm-mail-brand > span:last-child { display: grid; grid-template-columns: auto auto; align-items: baseline; column-gap: 6px; }
+.tm-mail-brand strong { color: #f1f6fb; font-size: 15px; letter-spacing: .08em; }
+.tm-mail-brand b { color: #69cce4; font: 600 12px "IBM Plex Mono", monospace; letter-spacing: .15em; }
+.tm-mail-brand small { grid-column: 1 / -1; margin-top: 3px; color: #748ba2; font: 500 9px "IBM Plex Mono", monospace; letter-spacing: .12em; }
+.tm-mail-top-actions { display: flex; align-items: center; gap: 12px; }
+.tm-mail-private { display: inline-flex; align-items: center; gap: 6px; color: #8eb8a6; font: 500 10px "IBM Plex Mono", monospace; }
+.tm-mail-main { box-sizing: border-box; width: min(1560px, 100%); min-height: calc(100vh - 125px); margin: 0 auto; padding: 27px clamp(14px, 3vw, 38px) 42px; }
+.tm-mail-auth-card { box-sizing: border-box; width: min(510px, 100%); margin: clamp(45px, 10vh, 110px) auto 70px; padding: 34px; display: grid; gap: 13px; color: #dce7f2; background: linear-gradient(145deg, #121d29, #0e1721); border: 1px solid #2a3a4d; border-radius: 12px; box-shadow: 0 24px 80px #0005; }
+.tm-mail-auth-card > svg, .tm-mail-lock { color: #64d5ee; }
+.tm-mail-lock { width: 44px; height: 44px; display: grid; place-items: center; background: #112a37; border: 1px solid #26536a; border-radius: 11px; }
+.tm-mail-auth-card .eyebrow { margin: 6px 0 0; color: #6ecde4; font: 500 10px "IBM Plex Mono", monospace; letter-spacing: .12em; }
+.tm-mail-auth-card h1 { margin: 0; color: #f0f5fa; font-size: clamp(22px, 4vw, 29px); font-weight: 600; letter-spacing: -.03em; }
+.tm-mail-auth-card > p:not(.eyebrow) { margin: 0; color: #94a5b7; font-size: 13px; line-height: 1.6; }
+.tm-mail-auth-card strong { color: #e8f2fc; }
+.tm-mail-auth-form { display: grid; gap: 12px; margin-top: 8px; }
+.tm-mail-auth-form input { box-sizing: border-box; width: 100%; min-height: 42px; padding: 9px 12px; color: #e8f2fa; background: #0b121b; border: 1px solid #33465b; border-radius: 6px; font: inherit; }
+.tm-mail-auth-form input:focus { outline: 2px solid #46bddb66; border-color: #51c5e1; }
+.tm-mail-auth-form .button { justify-content: center; min-height: 40px; }
+.tm-mail-auth-form small { display: inline-flex; align-items: center; gap: 7px; color: #7990a6; font-size: 11px; }
+.tm-mail-loading { width: fit-content; margin: 80px auto; display: flex; align-items: center; gap: 10px; color: #94a8bc; font-size: 13px; }
+.tm-mail-footer { padding: 17px 20px 22px; color: #687d92; border-top: 1px solid #1e2b39; text-align: center; font-size: 10px; }
+.tm-mail-footer a { color: #78c9df; text-decoration: none; }
+.tm-mail-footer a:hover { text-decoration: underline; }
+@media (max-width: 620px) {
+  .tm-mail-topbar { min-height: 62px; padding: 0 13px; }
+  .tm-mail-private { display: none; }
+  .tm-mail-top-actions .button { padding: 7px 9px; }
+  .tm-mail-main { padding-top: 17px; }
+  .tm-mail-auth-card { margin-top: 35px; padding: 25px 20px; }
+  .tm-mail-footer { line-height: 1.6; }
+}
+
 @media (max-width: 680px) {
   .cloud-row:not(.cloud-head) { grid-template-columns: minmax(0, 1fr) 62px 98px; gap: 7px; }
   .cloud-row:not(.cloud-head) > span:nth-child(3),

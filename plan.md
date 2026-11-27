@@ -1,11 +1,14 @@
 # TMP Server dashboard continuation plan
 
 ## Product scope
-Continue the existing React + TypeScript + Vite control panel published as a static GitHub Pages site, with Supabase OTP owner authentication and the separate Python host agent behind `api.tmpserver.com`. Preserve the established dark infrastructure-console shell and keep live host operations distinct from browser-local records. Do not modify the Linux host or private host configuration from this Sandbox.
+Continue the existing React + TypeScript + Vite control panel published as a static GitHub Pages site, with Supabase OTP owner authentication and the separate Python host agent behind `api.tmpserver.com`. Preserve the established dark infrastructure-console shell and keep live host operations distinct from browser-local records. Add `mail.tmpserver.com` as a dedicated owner-only TMP Mail surface by host-based routing in the existing build and a Cloudflare Worker reverse proxy to `tmpserver.com`; retain the compact mail client on the main dashboard. Do not modify the Linux host or private host configuration from this Sandbox.
 
 ## Project structure
 - `client/src/pages/Home.tsx`: dashboard shell, owner session, navigation, live API state, and existing host-backed views.
 - `client/src/pages/MailPanel.tsx`: Gmail-inspired TMP mailbox UI for the authenticated owner.
+- `client/src/pages/TMPMail.tsx`: separate mail-origin owner OTP gate and full-page shell reusing the existing Gmail client.
+- `ops/tmp-mail-origin-worker.js`: Cloudflare Worker proxy source for the new mail hostname.
+- `ops/TMP-MAIL-DEPLOY.md`: Linux host-agent update commands and Google OAuth origin requirements.
 - `client/src/lib/tmp-data.ts`: shared host telemetry and dashboard types.
 - `client/src/index.css`: shared responsive styling and mailbox styles.
 - `host-agent.py`: authenticated host endpoints, including secure OAuth code exchange/access-token lifecycle; never proxy or log Gmail message bodies.

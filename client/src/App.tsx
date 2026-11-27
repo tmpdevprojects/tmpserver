@@ -5,8 +5,12 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import TMPMail from "./pages/TMPMail";
 
 function Router() {
+  if (typeof window !== "undefined" && window.location.hostname.toLowerCase() === "mail.tmpserver.com") {
+    return <TMPMail />;
+  }
   return <Switch>
     <Route path="/" component={Home} />
     <Route path="/404" component={NotFound} />
