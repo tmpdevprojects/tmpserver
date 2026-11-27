@@ -139,6 +139,8 @@ def get_ports_and_version() -> tuple[str, str]:
         published = json.loads(result.stdout.strip())
     except json.JSONDecodeError as exc:
         raise SafeStop("Docker returned unreadable Minecraft port mappings.") from exc
+    if not isinstance(published, dict):
+        raise SafeStop("Docker reports no published Minecraft ports; no changes were made.")
     for protocol in ("tcp", "udp"):
         entries = published.get(f"{PORT}/{protocol}") or []
         if not any(str(entry.get("HostPort")) == str(PORT) for entry in entries):
