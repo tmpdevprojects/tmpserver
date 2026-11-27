@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""Check or safely repair TMP Server's Bedrock public address.
+
+Default action: set Geyser's previously-empty advertised address to
+play.tmpserver.com, after a verified-HDD Minecraft snapshot, then restart only
+the Minecraft Compose service. --check is read-only.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path("/opt/tmpserver/minecraft")
+CONFIG = ROOT / "data/plugins/Geyser-Spigot/config.yml"
+COMPOSE = ROOT / "compose.yml"
+CONTAINER = "tmpserver-minecraft"
+DOMAIN = "play.tmpserver.com"
+PORT = 19132
+SNAPSHOT_CANDIDATES = (
+    Path("/usr/local/bin/tmpserver-minecraft-snapshot"),
+    Path("/opt/tmpserver/app/ops/tmpserver-minecraft-snapshot"),
+)
+KEY_RE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_-]+):(?P<rest>.*?)(?:\r?\n)?$")
+
+
+class SafeStop(RuntimeError):
+    pass
+
+
+def run(args: list[str], *, cwd: Path | None = None, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, cwd=cwd, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, timeout=timeout, check=False)
+
+
+def fail_if_not_root() -> None:
+    if os.geteuid() != 0:
+        raise SafeStop("Run this command with sudo; no changes were made.")
+
+
+def value_of(rest: str) -> str:
+    return rest.split("#", 1)[0].strip()
+
+
+def geyser_address_state(config_path: Path) -> tuple[str, list[str]]:
+    if config_path.is_symlink() or not config_path.is_file():
+        raise SafeStop(f"Geyser config is missing or is a symlink: {config_path}")
+    try:
+        text = config_path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SafeStop(f"Could not safely read the Geyser config ({type(exc).__name__}).") from exc
+
+    lines = text.splitlines(keepends=True)
+    bedrock_index = None
+    bedrock_indent = None
+    for index, line in enumerate(lines):
+        match = KEY_RE.match(line)
+        if match and match.group("key") == "bedrock" and not value_of(match.group("rest")):
+            bedrock_index = index
+            bedrock_indent = len(match.group("indent"))
+            break
+    if bedrock_index is None or bedrock_indent is None:
+        raise SafeStop("Could not locate the expected Geyser bedrock: section; no changes were made.")
+
+    bedrock_end = len(lines)
+    for index in range(bedrock_index + 1, len(lines)):
+        match = KEY_RE.match(lines[index])
+        if match and len(match.group("indent")) <= bedrock_indent:
+            bedrock_end = index
+            break
+
+    entries: list[tuple[int, re.Match[str]]] = []
+    for index in range(bedrock_index + 1, bedrock_end):
+        match = KEY_RE.match(lines[index])
+        if match and len(match.group("indent")) > bedrock_indent:
+            entries.append((index, match))
+    if not entries:
+        raise SafeStop("The Geyser bedrock: section has no settings; no changes were made.")
+    direct_indent = min(len(match.group("indent")) for _, match in entries)
+    direct = [(index, match) for index, match in entries
+              if len(match.group("indent")) == direct_indent]
+
+    def direct_value(key: str) -> str | None:
+        matches = [value_of(match.group("rest")) for _, match in direct if match.group("key") == key]
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
+    if direct_value("port") != str(PORT):
+        raise SafeStop("Geyser is not configured for Bedrock port 19132; no changes were made.")
+    if direct_value("transport") != "nethernet":
+        raise SafeStop("Geyser transport is not exactly nethernet; no changes were made.")
+
+    signaling_matches = [(index, match) for index, match in direct if match.group("key") == "signaling"]
+    if len(signaling_matches) != 1 or value_of(signaling_matches[0][1].group("rest")):
+        raise SafeStop("Could not locate one standard nested Geyser signaling: section; no changes were made.")
+    signaling_index = signaling_matches[0][0]
+    signaling_indent = direct_indent
+    signaling_end = bedrock_end
+    for index in range(signaling_index + 1, bedrock_end):
+        match = KEY_RE.match(lines[index])
+        if match and len(match.group("indent")) <= signaling_indent:
+            signaling_end = index
+            break
+
+    address_matches: list[tuple[int, re.Match[str]]] = []
+    for index in range(signaling_index + 1, signaling_end):
+        match = KEY_RE.match(lines[index])
+        if match and match.group("key") == "advertise-addresses":
+            address_matches.append((index, match))
+    if len(address_matches) != 1:
+        raise SafeStop("Could not locate exactly one advertise-addresses setting under signaling; no changes were made.")
+
+    address_index, address_match = address_matches[0]
+    current_value = value_of(address_match.group("rest"))
+    if re.fullmatch(r"\[\s*\]", current_value):
+        return "needs_update", lines
+    if re.search(r"(?<![A-Za-z0-9.-])" + re.escape(DOMAIN) + r"(?![A-Za-z0-9.-])", current_value):
+        return "already_set", lines
+    raise SafeStop("Geyser already has a non-empty custom advertise-addresses value; refusing to overwrite it.")
+
+
+def get_ports_and_version() -> tuple[str, str]:
+    result = run(["docker", "inspect", "--format", "{{json .NetworkSettings.Ports}}", CONTAINER])
+    if result.returncode:
+        raise SafeStop("Could not inspect tmpserver-minecraft. Confirm Docker and the container are running.")
+    try:
+        published = json.loads(result.stdout.strip())
+    except json.JSONDecodeError as exc:
+        raise SafeStop("Docker returned unreadable Minecraft port mappings.") from exc
+    for protocol in ("tcp", "udp"):
+        entries = published.get(f"{PORT}/{protocol}") or []
+        if not any(str(entry.get("HostPort")) == str(PORT) for entry in entries):
+            raise SafeStop(f"The running container does not publish host port {PORT}/{protocol}; no changes were made.")
+
+    state = run(["docker", "inspect", "--format", "{{.State.Running}}", CONTAINER])
+    if state.returncode or state.stdout.strip() != "true":
+        raise SafeStop("Minecraft container is not running; no changes were made.")
+
+    jar = ROOT / "data/plugins/Geyser-Spigot.jar"
+    version = "unknown"
+    if jar.is_file() and not jar.is_symlink():
+        try:
+            with zipfile.ZipFile(jar) as package:
+                metadata = package.read("plugin.yml").decode("utf-8", "replace")
+            match = re.search(r"(?m)^version:\s*['\"]?([^\s'\"]+)", metadata)
+            if match:
+                version = match.group(1)
+        except (OSError, KeyError, zipfile.BadZipFile):
+            version = "unreadable"
+    return ", ".join((f"{PORT}/tcp", f"{PORT}/udp")), version
+
+
+def show_dns() -> None:
+    try:
+        addresses = list(dict.fromkeys(row[4][0] for row in socket.getaddrinfo(
+            DOMAIN, PORT, family=socket.AF_INET, type=socket.SOCK_STREAM)))
+        print(f"DNS A for {DOMAIN}: {', '.join(addresses)}")
+    except OSError:
+        print(f"DNS A for {DOMAIN}: lookup failed on this host")
+
+
+def snapshot_before_restart() -> Path:
+    snapshot_script = next((path for path in SNAPSHOT_CANDIDATES if path.is_file() and not path.is_symlink()), None)
+    if snapshot_script is None:
+        raise SafeStop("The verified-HDD snapshot command is unavailable; Paper was not restarted.")
+
+    result = run(["bash", str(snapshot_script)], timeout=360)
+    if result.stdout:
+        print(result.stdout.rstrip())
+    if result.returncode:
+        raise SafeStop("The verified-HDD snapshot failed; Geyser was not changed and Paper was not restarted.")
+
+    archive_line = next((line for line in result.stdout.splitlines()
+                         if line.startswith("Verified-HDD Minecraft snapshot written: ")), None)
+    checksum_line = next((line for line in result.stdout.splitlines()
+                          if line.startswith("SHA-256 checksum written: ")), None)
+    if not archive_line or not checksum_line:
+        raise SafeStop("Snapshot did not confirm a verified-HDD archive and checksum; Paper was not restarted.")
+    archive = Path(archive_line.split(": ", 1)[1].strip())
+    checksum = Path(checksum_line.split(": ", 1)[1].strip())
+    expected_dir = Path("/opt/tmpserver/cloud/minecraft-snapshots")
+    if not archive.is_relative_to(expected_dir) or not checksum.is_relative_to(expected_dir):
+        raise SafeStop("Snapshot output path was not under the verified Cloud snapshots folder; Paper was not restarted.")
+    if not archive.is_file() or not checksum.is_file():
+        raise SafeStop("Snapshot archive or checksum is missing; Paper was not restarted.")
+    verify = run(["sha256sum", "-c", checksum.name], cwd=checksum.parent)
+    if verify.returncode:
+        raise SafeStop("Snapshot checksum verification failed; Paper was not restarted.")
+    if verify.stdout:
+        print(verify.stdout.rstrip())
+    return archive
+
+
+def patch_advertise_address(config_path: Path, backup_path: Path) -> None:
+    state, lines = geyser_address_state(config_path)
+    if state != "needs_update":
+        raise SafeStop("Geyser config changed since preflight; no automatic overwrite was made.")
+
+    address_index = None
+    signaling_index = None
+    bedrock_index = None
+    for index, line in enumerate(lines):
+        match = KEY_RE.match(line)
+        if match and match.group("key") == "bedrock" and not value_of(match.group("rest")):
+            bedrock_index = index
+            break
+    assert bedrock_index is not None
+    bedrock_indent = len(KEY_RE.match(lines[bedrock_index]).group("indent"))  # type: ignore[union-attr]
+    bedrock_end = len(lines)
+    for index in range(bedrock_index + 1, len(lines)):
+        match = KEY_RE.match(lines[index])
+        if match and len(match.group("indent")) <= bedrock_indent:
+            bedrock_end = index
+            break
+    direct_indents = [len(match.group("indent")) for index in range(bedrock_index + 1, bedrock_end)
+                      if (match := KEY_RE.match(lines[index])) and len(match.group("indent")) > bedrock_indent]
+    direct_indent = min(direct_indents)
+    for index in range(bedrock_index + 1, bedrock_end):
+        match = KEY_RE.match(lines[index])
+        if match and len(match.group("indent")) == direct_indent and match.group("key") == "signaling":
+            signaling_index = index
+            break
+    assert signaling_index is not None
+    for index in range(signaling_index + 1, bedrock_end):
+        match = KEY_RE.match(lines[index])
+        if match and match.group("key") == "advertise-addresses":
+            address_index = index
+            break
+    assert address_index is not None
+
+    line_match = KEY_RE.match(lines[address_index])
+    assert line_match is not None
+    line = lines[address_index]
+    newline = "\r\n" if line.endswith("\r\n") else ("\n" if line.endswith("\n") else "")
+    rest = line_match.group("rest")
+    comment = "#" + rest.split("#", 1)[1] if "#" in rest else ""
+    replacement = f'{line_match.group("indent")}advertise-addresses: ["{DOMAIN}"]'
+    if comment:
+        replacement += " " + comment
+    lines[address_index] = replacement + newline
+    new_bytes = "".join(lines).encode("utf-8")
+
+    original_stat = config_path.stat()
+    fd, temporary_name = tempfile.mkstemp(prefix=".geyser-config-", dir=config_path.parent)
+    try:
+        with os.fdopen(fd, "wb") as temporary:
+            temporary.write(new_bytes)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.chmod(temporary_name, stat.S_IMODE(original_stat.st_mode))
+        os.chown(temporary_name, original_stat.st_uid, original_stat.st_gid)
+        os.replace(temporary_name, config_path)
+        directory_fd = os.open(config_path.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except Exception:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+    final_state, _ = geyser_address_state(config_path)
+    if final_state != "already_set":
+        shutil.copy2(backup_path, config_path)
+        raise SafeStop("Post-edit validation failed; the original config was restored and Paper was not restarted.")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Safely diagnose or repair Bedrock advertising for play.tmpserver.com.")
+    parser.add_argument("--check", action="store_true", help="read-only preflight; never edits or restarts")
+    args = parser.parse_args()
+
+    try:
+        fail_if_not_root()
+        if CONFIG.is_symlink() or not CONFIG.is_file():
+            raise SafeStop(f"Geyser config is missing or is a symlink: {CONFIG}")
+        if COMPOSE.is_symlink() or not COMPOSE.is_file():
+            raise SafeStop(f"Minecraft Compose file is missing or is a symlink: {COMPOSE}")
+
+        state, _ = geyser_address_state(CONFIG)
+        ports, geyser_version = get_ports_and_version()
+        print(f"Geyser transport/port: nethernet/{PORT}")
+        print(f"Container port mappings: {ports}")
+        print(f"Geyser plugin version: {geyser_version}")
+        print(f"Advertised address setting: {'already includes ' + DOMAIN if state == 'already_set' else 'empty; eligible for the targeted fix'}")
+        show_dns()
+
+        if args.check:
+            print("Read-only check complete; no snapshot, edits, or restart were performed.")
+            return 0
+        if state == "already_set":
+            print("No change made: play.tmpserver.com is already advertised. Paper was not restarted.")
+            print("Next, collect the fresh Geyser startup/error lines; this helper will not overwrite an existing custom address list.")
+            return 0
+
+        snapshot = snapshot_before_restart()
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        config_backup = CONFIG.with_name(f"config.yml.before-bedrock-fix-{stamp}")
+        if config_backup.exists() or config_backup.is_symlink():
+            raise SafeStop("Config backup destination already exists; no config was changed and Paper was not restarted.")
+        shutil.copy2(CONFIG, config_backup)
+        patch_advertise_address(CONFIG, config_backup)
+        print(f"Updated only Geyser's advertised address to {DOMAIN}.")
+        print(f"Original config preserved at: {config_backup}")
+        print(f"Verified-HDD snapshot: {snapshot}")
+
+        restart = run(["docker", "compose", "-f", str(COMPOSE), "restart", "minecraft"], timeout=180)
+        if restart.stdout:
+            print(restart.stdout.rstrip())
+        if restart.returncode:
+            raise SafeStop(f"Minecraft restart failed. Preserve the config backup at {config_backup}; do not restore world data.")
+
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            state_result = run(["docker", "inspect", "--format", "{{.State.Running}}", CONTAINER], timeout=10)
+            if state_result.returncode == 0 and state_result.stdout.strip() == "true":
+                break
+            time.sleep(2)
+        else:
+            raise SafeStop(f"Minecraft did not return to running state within 60 seconds. Snapshot: {snapshot}")
+
+        print("Minecraft container is running. Only tmpserver-minecraft was restarted, and only after the snapshot checksum passed.")
+        print(f"Now try Bedrock once: {DOMAIN}, port {PORT}.")
+        print("This does not change DNS, Cloudflare, the Minecraft world, plugin permissions, or the email sender.")
+        return 0
+    except (SafeStop, OSError, subprocess.TimeoutExpired) as exc:
+        print(f"STOP: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
