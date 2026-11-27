@@ -4,6 +4,12 @@
 
 The Worker source is `ops/tmp-mail-origin-worker.js`. Its Cloudflare route is scoped to `mail.tmpserver.com/*`, and its upstream is only `https://tmpserver.com`. It does not connect to or read server-side secrets. Cloudflare DNS must have a proxied CNAME `mail` → `tmpserver.com` for the Worker route.
 
+## GitHub Actions build settings
+
+In the repository's **Settings → Secrets and variables → Actions**, verify these names exist: repository secrets `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_SUPABASE_OWNER_EMAIL`; repository variable `VITE_GOOGLE_CLIENT_ID`. Keep existing Supabase and Google values private and do not paste them into chat.
+
+The current live JavaScript bundle contains the TMP Mail interface but not the expected owner-email value. Verify that `VITE_SUPABASE_OWNER_EMAIL` matches the exact owner address used by the dashboard. If it is missing or incorrect, add or correct that Actions secret, then rerun **Deploy TMP Server to GitHub Pages** from the Actions tab. The Supabase inline-code sign-in needs no project-wide redirect URL change.
+
 ## Linux host agent update
 
 After the repository deployment is available, run these commands on the Linux server. They update only the checked-out repository and restart the host agent so its CORS allowlist accepts the new mail origin. They do not touch Minecraft, Cloud storage, HDD contents, or the private digest sender.
