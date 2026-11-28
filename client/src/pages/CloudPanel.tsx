@@ -101,14 +101,14 @@ function fileIcon(file: CloudFile) {
   return File;
 }
 
-function CloudInlinePreview({ file, kind, enabled, onPreview }: { file: CloudFile; kind: PreviewKind | null; enabled: boolean; onPreview: (file: CloudFile) => Promise<Blob> }) {
+function CloudInlinePreview({ file, kind, enabled, autoEnabled, onPreview }: { file: CloudFile; kind: PreviewKind | null; enabled: boolean; autoEnabled: boolean; onPreview: (file: CloudFile) => Promise<Blob> }) {
   const elementRef = useRef<HTMLDivElement>(null);
   const [nearViewport, setNearViewport] = useState(false);
   const [content, setContent] = useState<{ url?: string; text?: string; error?: string; loading: boolean }>({ loading: false });
 
   useEffect(() => {
     const element = elementRef.current;
-    if (!enabled || !kind || !element) return;
+    if (!enabled || !autoEnabled || !kind || !element) return;
     if (!("IntersectionObserver" in window)) {
       setNearViewport(true);
       return;
@@ -121,10 +121,10 @@ function CloudInlinePreview({ file, kind, enabled, onPreview }: { file: CloudFil
     }, { rootMargin: "280px 0px", threshold: 0.01 });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [enabled, kind, file.path]);
+  }, [enabled, autoEnabled, kind, file.path]);
 
   useEffect(() => {
-    if (!enabled || !kind || !nearViewport || file.size > previewLimit(kind)) return;
+    if (!enabled || !autoEnabled || !kind || !nearViewport || file.size > previewLimit(kind)) return;
     let cancelled = false;
     let objectUrl: string | undefined;
     setContent({ loading: true });
@@ -144,10 +144,11 @@ function CloudInlinePreview({ file, kind, enabled, onPreview }: { file: CloudFil
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [enabled, kind, nearViewport, file, onPreview]);
+  }, [enabled, autoEnabled, kind, nearViewport, file, onPreview]);
 
   if (!kind || file.size > previewLimit(kind)) return <div ref={elementRef} className="cloud-inline-placeholder"><File size={20} /><span>{kind ? "Over preview limit · download to view" : "No safe inline preview · download to view"}</span></div>;
   if (!enabled) return <div ref={elementRef} className="cloud-inline-placeholder"><HardDrive size={20} /><span>Preview waits for verified Cloud storage</span></div>;
+  if (!autoEnabled) return <div ref={elementRef} className="cloud-inline-placeholder"><Eye size={20} /><span>Automatic previews are off · use the preview button</span></div>;
   if (!nearViewport || content.loading) return <div ref={elementRef} className="cloud-inline-placeholder" aria-live="polite"><LoaderCircle size={18} className="cloud-preview-spin" /><span>Loading safe preview…</span></div>;
   if (content.error) return <div ref={elementRef} className="cloud-inline-placeholder has-error"><File size={20} /><span>{content.error}</span></div>;
   if (kind === "image" && content.url) return <div ref={elementRef} className="cloud-inline-preview"><img loading="lazy" src={content.url} alt={file.name} /></div>;
@@ -176,9 +177,10 @@ type CloudPanelProps = {
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
   onRefresh?: () => void;
+  autoPreviewsEnabled?: boolean;
 };
 
-export default function CloudPanel({ files, folders, usedBytes, busy, error, storageAvailable, uploadProgress, uploadStatus, onUpload, onCreateFolder, onBackup, onDownload, onPreview, onDelete, standalone = false, category: controlledCategory, onCategoryChange, searchQuery, onSearchQueryChange, onRefresh }: CloudPanelProps) {
+export default function CloudPanel({ files, folders, usedBytes, busy, error, storageAvailable, uploadProgress, uploadStatus, onUpload, onCreateFolder, onBackup, onDownload, onPreview, onDelete, standalone = false, category: controlledCategory, onCategoryChange, searchQuery, onSearchQueryChange, onRefresh, autoPreviewsEnabled = true }: CloudPanelProps) {
   const [currentPath, setCurrentPath] = useState("");
   const [localCategory, setLocalCategory] = useState<CloudCategory>("all");
   const [localQuery, setLocalQuery] = useState("");
@@ -286,7 +288,7 @@ export default function CloudPanel({ files, folders, usedBytes, busy, error, sto
           const tooLarge = kind !== null && file.size > previewLimit(kind);
           return <article className="cloud-inline-card" key={file.path}>
             <header><button type="button" className="cloud-inline-name" onClick={() => void openPreview(file)} disabled={!kind || tooLarge || storageAvailable !== true} title={!kind ? "No safe preview available" : tooLarge ? "Over the safe preview limit" : "Open full preview"}><Icon size={16} /><span>{file.name}</span></button><button type="button" className="icon-button" title="Open full preview" aria-label={`Open full preview for ${file.name}`} onClick={() => void openPreview(file)} disabled={!kind || tooLarge || storageAvailable !== true || previewLoading === file.path}>{previewLoading === file.path ? <LoaderCircle size={15} className="cloud-preview-spin" /> : <Eye size={15} />}</button></header>
-            <CloudInlinePreview file={file} kind={kind} enabled={storageAvailable === true} onPreview={onPreview} />
+            <CloudInlinePreview file={file} kind={kind} enabled={storageAvailable === true} autoEnabled={autoPreviewsEnabled} onPreview={onPreview} />
             <footer><span>{formatBytes(file.size)} · {new Date(file.modified * 1000).toLocaleDateString()}</span><span><button type="button" className="cloud-inline-action" onClick={() => onDownload(file)} disabled={storageAvailable !== true} aria-label={`Download ${file.name}`} title="Download"><Download size={15} /></button><button type="button" className="cloud-inline-action" onClick={() => onDelete(file)} disabled={busy || storageAvailable !== true} aria-label={`Delete ${file.name}`} title="Delete"><Trash2 size={15} /></button></span></footer>
           </article>;
         })}

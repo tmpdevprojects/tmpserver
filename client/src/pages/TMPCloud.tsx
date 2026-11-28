@@ -2,14 +2,22 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import type { Session } from "@supabase/supabase-js";
 import {
   ArrowRight,
+  Check,
+  ChevronDown,
+  ChevronRight,
   Cloud,
   HardDrive,
   LoaderCircle,
   LockKeyhole,
   LogOut,
+  Monitor,
+  Moon,
   RefreshCw,
   Search,
+  Settings2,
   ShieldCheck,
+  Sun,
+  X,
 } from "lucide-react";
 import { isOwnerSession, ownerEmail, supabase, supabaseConfigured } from "@/lib/supabase";
 import type { CloudFile } from "@/lib/tmp-data";
@@ -21,6 +29,26 @@ const CLOUD_FILE_MAX_BYTES = 20_000_000_000;
 const CLOUD_CHUNK_BYTES = 64 * 1024 ** 2;
 type CloudUploadResult = { status: "uploaded" } | { status: "skipped" } | { status: "failed"; message: string };
 type CloudListing = { files?: CloudFile[]; folders?: string[]; usedBytes?: number; storage?: { available?: boolean; message?: string } };
+type CloudAppearance = "system" | "light" | "dark";
+type CloudDensity = "comfortable" | "compact";
+
+function readLocalChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const value = window.localStorage.getItem(key);
+    return allowed.includes(value as T) ? value as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readLocalFlag(key: string, fallback: boolean): boolean {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value === "true";
+  } catch {
+    return fallback;
+  }
+}
 
 function routeError(response: Response, payload: { error?: unknown }, action: string) {
   if (response.status === 404) return `${action} route is missing from the connected host agent (HTTP 404). Update the Linux repository to origin/main and restart tmpserver-host-agent.`;
@@ -47,6 +75,51 @@ export default function TMPCloud() {
   const [category, setCategory] = useState<CloudCategory>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [appearance, setAppearance] = useState<CloudAppearance>(() => readLocalChoice("tmp-cloud-appearance", ["system", "light", "dark"], "system"));
+  const [density, setDensity] = useState<CloudDensity>(() => readLocalChoice("tmp-cloud-density", ["comfortable", "compact"], "comfortable"));
+  const [autoPreviews, setAutoPreviews] = useState(() => readLocalFlag("tmp-cloud-auto-previews", true));
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
+  const effectiveTheme = appearance === "system" ? systemDark ? "dark" : "light" : appearance;
+
+  useEffect(() => {
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!media) return;
+    const update = () => setSystemDark(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    try { window.localStorage.setItem("tmp-cloud-appearance", appearance); } catch { /* Browser storage is optional. */ }
+  }, [appearance]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("tmp-cloud-density", density);
+      window.localStorage.setItem("tmp-cloud-auto-previews", String(autoPreviews));
+    } catch { /* Browser storage is optional. */ }
+  }, [density, autoPreviews]);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) setAccountMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setAccountMenuOpen(false);
+      setSettingsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
 
   useEffect(() => {
     document.title = "TMP Cloud · TMP Server";
@@ -355,16 +428,16 @@ export default function TMPCloud() {
 
   const owner = isOwnerSession(session);
 
-  if (!supabaseConfigured) return <div className="tmp-cloud-gate"><section className="tmp-cloud-auth-card" role="alert"><span className="tmp-cloud-auth-icon"><LockKeyhole size={23} /></span><p className="tmp-cloud-eyebrow">TMP CLOUD / SETUP REQUIRED</p><h1>Private Cloud access is unavailable.</h1><p>Supabase owner-auth settings are missing from this build. No Cloud data is loaded until the existing owner allowlist is configured.</p></section></div>;
-  if (checking) return <div className="tmp-cloud-gate"><div className="tmp-cloud-loading" role="status"><LoaderCircle size={19} className="tmp-cloud-spin" /> Checking the owner session…</div></div>;
-  if (session && !owner) return <div className="tmp-cloud-gate"><section className="tmp-cloud-auth-card"><span className="tmp-cloud-auth-icon"><LockKeyhole size={23} /></span><p className="tmp-cloud-eyebrow">TMP CLOUD / ACCESS DENIED</p><h1>This Cloud is owner-only.</h1><p>The signed-in Supabase account is not the configured TMP Server owner. No Cloud files have been requested.</p><button className="tmp-cloud-button" onClick={() => void signOut()}><LogOut size={15} /> Sign out and use owner account</button></section></div>;
-  if (!owner) return <div className="tmp-cloud-gate"><section className="tmp-cloud-auth-card" aria-labelledby="tmp-cloud-auth-title"><span className="tmp-cloud-auth-icon"><LockKeyhole size={23} /></span><p className="tmp-cloud-eyebrow">TMP CLOUD / OWNER ACCESS</p><h1 id="tmp-cloud-auth-title">Your files, privately.</h1>{!ownerEmail ? <p>Owner email is not configured. Cloud stays locked until the existing owner allowlist is restored.</p> : codeSent ? <><p>A one-time code was sent to <strong>{ownerEmail}</strong>. Enter it here to open TMP Cloud.</p><form className="tmp-cloud-auth-form" onSubmit={verifyCode}><label htmlFor="tmp-cloud-code">Email verification code</label><input id="tmp-cloud-code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} placeholder="123456" maxLength={10} required />{authError && <p className="tmp-cloud-error" role="alert">{authError}</p>}<button className="tmp-cloud-button primary" type="submit" disabled={authBusy}>{authBusy ? "Verifying…" : "Verify and open TMP Cloud"}<ArrowRight size={15} /></button><button className="tmp-cloud-button secondary" type="button" onClick={() => { setCodeSent(false); setCode(""); setAuthError(""); }}>Use a different email</button></form></> : <><p>Sign in with the configured TMP Server owner account. Public sign-up is disabled.</p><form className="tmp-cloud-auth-form" onSubmit={sendCode}><label htmlFor="tmp-cloud-email">Owner email</label><input id="tmp-cloud-email" type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" required />{authError && <p className="tmp-cloud-error" role="alert">{authError}</p>}<button className="tmp-cloud-button primary" type="submit" disabled={authBusy}>{authBusy ? "Sending code…" : "Send owner sign-in code"}<ArrowRight size={15} /></button><small><ShieldCheck size={14} /> Access restricted to {ownerEmail}.</small></form></>}</section></div>;
+  if (!supabaseConfigured) return <div className="tmp-cloud-gate" data-theme={effectiveTheme}><section className="tmp-cloud-auth-card" role="alert"><span className="tmp-cloud-auth-icon"><LockKeyhole size={23} /></span><p className="tmp-cloud-eyebrow">TMP CLOUD / SETUP REQUIRED</p><h1>Private Cloud access is unavailable.</h1><p>Supabase owner-auth settings are missing from this build. No Cloud data is loaded until the existing owner allowlist is configured.</p></section></div>;
+  if (checking) return <div className="tmp-cloud-gate" data-theme={effectiveTheme}><div className="tmp-cloud-loading" role="status"><LoaderCircle size={19} className="tmp-cloud-spin" /> Checking the owner session…</div></div>;
+  if (session && !owner) return <div className="tmp-cloud-gate" data-theme={effectiveTheme}><section className="tmp-cloud-auth-card"><span className="tmp-cloud-auth-icon"><LockKeyhole size={23} /></span><p className="tmp-cloud-eyebrow">TMP CLOUD / ACCESS DENIED</p><h1>This Cloud is owner-only.</h1><p>The signed-in Supabase account is not the configured TMP Server owner. No Cloud files have been requested.</p><button className="tmp-cloud-button" onClick={() => void signOut()}><LogOut size={15} /> Sign out and use owner account</button></section></div>;
+  if (!owner) return <div className="tmp-cloud-gate" data-theme={effectiveTheme}><section className="tmp-cloud-auth-card" aria-labelledby="tmp-cloud-auth-title"><span className="tmp-cloud-auth-icon"><LockKeyhole size={23} /></span><p className="tmp-cloud-eyebrow">TMP CLOUD / OWNER ACCESS</p><h1 id="tmp-cloud-auth-title">Your files, privately.</h1>{!ownerEmail ? <p>Owner email is not configured. Cloud stays locked until the existing owner allowlist is restored.</p> : codeSent ? <><p>A one-time code was sent to <strong>{ownerEmail}</strong>. Enter it here to open TMP Cloud.</p><form className="tmp-cloud-auth-form" onSubmit={verifyCode}><label htmlFor="tmp-cloud-code">Email verification code</label><input id="tmp-cloud-code" inputMode="numeric" autoComplete="one-time-code" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} placeholder="123456" maxLength={10} required />{authError && <p className="tmp-cloud-error" role="alert">{authError}</p>}<button className="tmp-cloud-button primary" type="submit" disabled={authBusy}>{authBusy ? "Verifying…" : "Verify and open TMP Cloud"}<ArrowRight size={15} /></button><button className="tmp-cloud-button secondary" type="button" onClick={() => { setCodeSent(false); setCode(""); setAuthError(""); }}>Use a different email</button></form></> : <><p>Sign in with the configured TMP Server owner account. Public sign-up is disabled.</p><form className="tmp-cloud-auth-form" onSubmit={sendCode}><label htmlFor="tmp-cloud-email">Owner email</label><input id="tmp-cloud-email" type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" required />{authError && <p className="tmp-cloud-error" role="alert">{authError}</p>}<button className="tmp-cloud-button primary" type="submit" disabled={authBusy}>{authBusy ? "Sending code…" : "Send owner sign-in code"}<ArrowRight size={15} /></button><small><ShieldCheck size={14} /> Access restricted to {ownerEmail}.</small></form></>}</section></div>;
 
-  return <div className="tmp-cloud-root">
+  return <div className="tmp-cloud-root" data-theme={effectiveTheme} data-density={density}>
     <header className="tmp-cloud-topbar">
       <a className="tmp-cloud-brand" href="https://cloud.tmpserver.com/" aria-label="TMP Cloud home"><span className="tmp-cloud-brand-mark"><Cloud size={19} /></span><span><strong>TMP</strong><b>CLOUD</b><small>PRIVATE FILE CONSOLE</small></span></a>
       <label className="tmp-cloud-top-search"><Search size={17} /><input ref={searchInputRef} value={searchQuery} onChange={event => setSearchQuery(event.target.value)} placeholder="Search files in this folder" aria-label="Search TMP Cloud files and folders" /><kbd>/</kbd></label>
-      <div className="tmp-cloud-top-actions"><span className="tmp-cloud-owner"><ShieldCheck size={14} /> Owner only</span><button type="button" className="tmp-cloud-refresh" onClick={() => void refreshCloud()} disabled={busy || storageAvailable !== true} aria-label="Refresh Cloud files" title="Refresh"><RefreshCw size={16} /></button><button type="button" className="tmp-cloud-avatar" onClick={() => void signOut()} title={`Sign out ${ownerEmail}`} aria-label={`Sign out ${ownerEmail}`}>{ownerEmail.slice(0, 1).toUpperCase()}</button></div>
+      <div className="tmp-cloud-top-actions"><span className="tmp-cloud-owner"><ShieldCheck size={14} /> Owner only</span><button type="button" className="tmp-cloud-refresh" onClick={() => void refreshCloud()} disabled={busy || storageAvailable !== true} aria-label="Refresh Cloud files" title="Refresh"><RefreshCw size={16} /></button><div className="tmp-cloud-account-area" ref={accountMenuRef}><button type="button" className="tmp-cloud-avatar" onClick={() => setAccountMenuOpen(value => !value)} title={`Account settings for ${ownerEmail}`} aria-label={`Open account menu for ${ownerEmail}`} aria-haspopup="menu" aria-expanded={accountMenuOpen}><span>{ownerEmail.slice(0, 1).toUpperCase()}</span><ChevronDown size={12} /></button>{accountMenuOpen && <div className="tmp-cloud-account-menu" role="menu" aria-label="TMP Cloud account"><div className="tmp-cloud-account-summary"><span className="tmp-cloud-avatar-large">{ownerEmail.slice(0, 1).toUpperCase()}</span><span><strong>{ownerEmail}</strong><small>TMP Server owner</small></span></div><button type="button" role="menuitem" onClick={() => { setSettingsOpen(true); setAccountMenuOpen(false); }}><Settings2 size={16} /><span>Account settings</span><ChevronRight size={15} /></button><button type="button" role="menuitem" onClick={() => void signOut()}><LogOut size={16} /><span>Sign out</span></button></div>}</div></div>
     </header>
     <div className="tmp-cloud-breadcrumb-strip"><div className="tmp-cloud-path-label"><Cloud size={14} /><span>Storage</span><span className="tmp-cloud-separator">/</span><strong>My Cloud</strong></div><div className="tmp-cloud-security"><HardDrive size={13} /> {storageAvailable === true ? "Verified external HDD" : storageAvailable === false ? "External HDD unavailable" : "Storage status pending"}</div></div>
     <main className="tmp-cloud-main">
@@ -386,6 +459,7 @@ export default function TMPCloud() {
         onPreview={previewFile}
         onDelete={file => void deleteFile(file)}
         standalone
+        autoPreviewsEnabled={autoPreviews}
         category={category}
         onCategoryChange={setCategory}
         searchQuery={searchQuery}
@@ -393,6 +467,7 @@ export default function TMPCloud() {
         onRefresh={() => void refreshCloud()}
       />
     </main>
+    {settingsOpen && <div className="tmp-cloud-settings-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><section className="tmp-cloud-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="tmp-cloud-settings-title"><header><div><p className="tmp-cloud-eyebrow">TMP CLOUD / PREFERENCES</p><h2 id="tmp-cloud-settings-title">Account settings</h2></div><button type="button" className="tmp-cloud-settings-close" onClick={() => setSettingsOpen(false)} aria-label="Close account settings"><X size={18} /></button></header><div className="tmp-cloud-settings-profile"><span className="tmp-cloud-avatar-large">{ownerEmail.slice(0, 1).toUpperCase()}</span><span><strong>{ownerEmail}</strong><small><ShieldCheck size={13} /> Owner account · protected access</small></span></div><section className="tmp-cloud-settings-section"><div><h3>Appearance</h3><p>Choose how TMP Cloud looks on this device.</p></div><div className="tmp-cloud-choice-grid" role="radiogroup" aria-label="Appearance"><button type="button" role="radio" aria-checked={appearance === "light"} className={appearance === "light" ? "selected" : ""} onClick={() => setAppearance("light")}><Sun size={17} /><strong>Light</strong><small>Bright surfaces</small>{appearance === "light" && <Check size={15} className="selected-check" />}</button><button type="button" role="radio" aria-checked={appearance === "dark"} className={appearance === "dark" ? "selected" : ""} onClick={() => setAppearance("dark")}><Moon size={17} /><strong>Dark</strong><small>Low-light comfort</small>{appearance === "dark" && <Check size={15} className="selected-check" />}</button><button type="button" role="radio" aria-checked={appearance === "system"} className={appearance === "system" ? "selected" : ""} onClick={() => setAppearance("system")}><Monitor size={17} /><strong>System</strong><small>Follow device setting</small>{appearance === "system" && <Check size={15} className="selected-check" />}</button></div></section><section className="tmp-cloud-settings-section"><div><h3>Display density</h3><p>Adjust the space used by file cards.</p></div><div className="tmp-cloud-segmented" role="radiogroup" aria-label="Display density"><button type="button" role="radio" aria-checked={density === "comfortable"} className={density === "comfortable" ? "selected" : ""} onClick={() => setDensity("comfortable")}>Comfortable</button><button type="button" role="radio" aria-checked={density === "compact"} className={density === "compact" ? "selected" : ""} onClick={() => setDensity("compact")}>Compact</button></div></section><section className="tmp-cloud-settings-section"><div><h3>File previews</h3><p>Safe image, PDF, and text previews stay within the existing size limits.</p></div><label className="tmp-cloud-switch"><span><strong>Automatic inline previews</strong><small>Load previews as eligible files enter view.</small></span><input type="checkbox" role="switch" checked={autoPreviews} onChange={event => setAutoPreviews(event.target.checked)} /><span className="tmp-cloud-switch-track" aria-hidden="true" /></label></section><p className="tmp-cloud-settings-note">These preferences are saved only in this browser. They do not change your owner sign-in, Gmail settings, server configuration, or files.</p></section></div>}
     <footer className="tmp-cloud-footer"><span><ShieldCheck size={13} /> Private TMP Server storage · content stays on the verified external HDD</span><a href="https://tmpserver.com/">Return to TMP Server</a></footer>
   </div>;
 }

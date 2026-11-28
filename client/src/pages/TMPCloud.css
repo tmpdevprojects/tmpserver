@@ -221,3 +221,119 @@
   .tmp-cloud-explorer .cloud-preview-backdrop { padding: 9px; }
   .tmp-cloud-explorer .cloud-preview-dialog { border-radius: 12px; }
 }
+
+
+/* Owner account menu and browser-local Cloud preferences. */
+.tmp-cloud-account-area { position: relative; flex: 0 0 auto; }
+.tmp-cloud-avatar { display: flex; align-items: center; justify-content: center; gap: 3px; width: auto; min-width: 44px; padding: 0 8px; border-radius: 22px; cursor: pointer; }
+.tmp-cloud-avatar > span { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: #ffffff24; font-size: 12px; }
+.tmp-cloud-avatar > svg { opacity: .9; }
+.tmp-cloud-account-menu { position: absolute; z-index: 40; top: calc(100% + 10px); right: 0; width: min(310px, calc(100vw - 24px)); padding: 8px; color: #202124; border: 1px solid #dadce0; border-radius: 16px; background: #fff; box-shadow: 0 10px 32px #20212428; }
+.tmp-cloud-account-summary { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 10px 14px; border-bottom: 1px solid #e8eaed; }
+.tmp-cloud-account-summary > span:last-child, .tmp-cloud-settings-profile > span:nth-child(2) { display: grid; gap: 4px; min-width: 0; }
+.tmp-cloud-account-summary strong, .tmp-cloud-settings-profile strong { overflow: hidden; color: #202124; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.tmp-cloud-account-summary small, .tmp-cloud-settings-profile small { display: flex; align-items: center; gap: 5px; color: #70757a; font-size: 11px; }
+.tmp-cloud-avatar-large { display: grid; place-items: center; flex: 0 0 auto; width: 42px; height: 42px; color: #fff; border-radius: 50%; background: #1a73e8; font-size: 16px; font-weight: 600; }
+.tmp-cloud-account-menu > button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 42px; padding: 0 11px; color: #3c4043; border: 0; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; font-size: 12px; }
+.tmp-cloud-account-menu > button:hover { background: #f1f3f4; }
+.tmp-cloud-account-menu > button span { flex: 1; }
+.tmp-cloud-account-menu > button svg { color: #5f6368; }
+.tmp-cloud-settings-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; overflow: auto; padding: 18px; background: #20212470; }
+.tmp-cloud-settings-dialog { width: min(650px, 100%); max-height: min(90vh, 820px); overflow: auto; color: #202124; border: 1px solid #dadce0; border-radius: 20px; background: #fff; box-shadow: 0 20px 70px #0004; }
+.tmp-cloud-settings-dialog > header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 22px 25px 18px; border-bottom: 1px solid #e8eaed; }
+.tmp-cloud-settings-dialog > header .tmp-cloud-eyebrow { margin-bottom: 5px; }
+.tmp-cloud-settings-dialog > header h2 { margin: 0; color: #202124; font-size: 22px; font-weight: 500; letter-spacing: -.03em; }
+.tmp-cloud-settings-close { display: grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; color: #5f6368; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
+.tmp-cloud-settings-close:hover { background: #f1f3f4; }
+.tmp-cloud-settings-profile { display: flex; align-items: center; gap: 13px; padding: 17px 25px; border-bottom: 1px solid #e8eaed; }
+.tmp-cloud-settings-profile small svg { color: #188038; }
+.tmp-cloud-settings-section { display: grid; gap: 14px; padding: 20px 25px; border-bottom: 1px solid #e8eaed; }
+.tmp-cloud-settings-section h3 { margin: 0; color: #202124; font-size: 14px; font-weight: 600; }
+.tmp-cloud-settings-section > div:first-child p { margin: 4px 0 0; color: #70757a; font-size: 11px; line-height: 1.5; }
+.tmp-cloud-choice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.tmp-cloud-choice-grid button { position: relative; display: grid; justify-items: start; gap: 7px; min-height: 100px; padding: 13px; color: #3c4043; border: 1px solid #dadce0; border-radius: 12px; background: #fff; text-align: left; cursor: pointer; }
+.tmp-cloud-choice-grid button:hover { border-color: #aecbfa; background: #f8fbff; }
+.tmp-cloud-choice-grid button.selected { color: #174ea6; border-color: #1a73e8; background: #f3f7ff; box-shadow: inset 0 0 0 1px #1a73e8; }
+.tmp-cloud-choice-grid button > svg:first-child { color: #5f6368; }
+.tmp-cloud-choice-grid button.selected > svg:first-child { color: #1a73e8; }
+.tmp-cloud-choice-grid button strong { font-size: 12px; }
+.tmp-cloud-choice-grid button small { color: #70757a; font-size: 10px; }
+.tmp-cloud-choice-grid button .selected-check { position: absolute; top: 11px; right: 11px; color: #1a73e8; }
+.tmp-cloud-segmented { display: flex; width: fit-content; gap: 3px; padding: 3px; border: 1px solid #dadce0; border-radius: 10px; background: #f1f3f4; }
+.tmp-cloud-segmented button { min-height: 34px; padding: 0 14px; color: #5f6368; border: 0; border-radius: 7px; background: transparent; cursor: pointer; font-size: 11px; }
+.tmp-cloud-segmented button.selected { color: #174ea6; background: #fff; box-shadow: 0 1px 3px #20212420; font-weight: 600; }
+.tmp-cloud-switch { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 15px; cursor: pointer; }
+.tmp-cloud-switch > span:first-child { display: grid; gap: 4px; }
+.tmp-cloud-switch strong { color: #3c4043; font-size: 12px; font-weight: 600; }
+.tmp-cloud-switch small { color: #70757a; font-size: 10px; line-height: 1.45; }
+.tmp-cloud-switch input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+.tmp-cloud-switch-track { position: relative; flex: 0 0 auto; width: 40px; height: 22px; border: 1px solid #9aa0a6; border-radius: 999px; background: #dadce0; transition: background .16s ease, border-color .16s ease; }
+.tmp-cloud-switch-track::after { position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #0003; content: ""; transition: transform .16s ease; }
+.tmp-cloud-switch input:checked + .tmp-cloud-switch-track { border-color: #1a73e8; background: #1a73e8; }
+.tmp-cloud-switch input:checked + .tmp-cloud-switch-track::after { transform: translateX(18px); }
+.tmp-cloud-switch input:focus-visible + .tmp-cloud-switch-track { outline: 2px solid #1a73e8; outline-offset: 3px; }
+.tmp-cloud-settings-note { margin: 0; padding: 15px 25px 19px; color: #70757a; font-size: 10px; line-height: 1.6; }
+
+/* Dark palette is scoped to the dedicated Cloud hostname and owner gate. */
+.tmp-cloud-root[data-theme="dark"], .tmp-cloud-gate[data-theme="dark"] { color-scheme: dark; color: #e8eaed; background: #15181d; }
+.tmp-cloud-gate[data-theme="dark"] { background: radial-gradient(ellipse at 50% 25%, #202d3f, #15181d 62%); }
+.tmp-cloud-gate[data-theme="dark"] .tmp-cloud-auth-card, .tmp-cloud-gate[data-theme="dark"] .tmp-cloud-loading { color: #e8eaed; border-color: #39414d; background: #20242b; }
+.tmp-cloud-gate[data-theme="dark"] .tmp-cloud-auth-card h1 { color: #e8eaed; }
+.tmp-cloud-gate[data-theme="dark"] .tmp-cloud-auth-card > p:not(.tmp-cloud-eyebrow), .tmp-cloud-gate[data-theme="dark"] .tmp-cloud-eyebrow, .tmp-cloud-gate[data-theme="dark"] .tmp-cloud-auth-form label { color: #b8c0cb; }
+.tmp-cloud-gate[data-theme="dark"] .tmp-cloud-auth-form input { color: #e8eaed; border-color: #4a5260; background: #171a1f; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-topbar, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-breadcrumb-strip, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-footer, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-drive, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .tmp-cloud-category-nav, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-card, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-folder, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-new-folder { color: #e8eaed; border-color: #39414d; background: #20242b; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-drive-toolbar, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-card > header, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-card > footer, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-drive-footer { border-color: #343b46; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .tmp-cloud-hero { color: #e8eaed; border-color: #39414d; background: linear-gradient(120deg, #20242b, #1b2431); }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-stats > div { color: #e8eaed; border-color: #39414d; background: #20242b; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-brand, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-path-label strong, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-current-path h3, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-current-path h3, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-name, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-folder, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-stats b, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-preview.text-preview pre, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-current-path h3 { color: #e8eaed; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-brand small, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-path-label, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-security, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-footer, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .tmp-cloud-hero p, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-stats span, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-current-path > span, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-card > footer, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-drive-footer { color: #b2bbc6; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-top-search { color: #b2bbc6; background: #2a3038; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-top-search:focus-within { border-color: #5478a9; background: #20242b; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-top-search input, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-new-folder input { color: #e8eaed; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-top-search input::placeholder { color: #aeb7c2; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-top-search kbd { color: #c4cbd4; border-color: #4a5260; background: #20242b; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-refresh { color: #e8eaed; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-refresh:hover, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .tmp-cloud-category-nav button:hover, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-breadcrumbs button:hover { color: #e8eaed; background: #2b323c; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .tmp-cloud-category-nav button { color: #c2cad4; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .tmp-cloud-category-nav button.active { color: #c5d9ff; background: #23344c; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-breadcrumbs button, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-card .icon-button, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-action { color: #c2cad4; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-folder:hover, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-card:hover { border-color: #4a6281; background: #252c35; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-hero-actions .button:not(.primary) { color: #dfe5ed; border-color: #4a5260; background: #252a32; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-preview, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-placeholder, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-preview-content { color: #b2bbc6; background: #171a1f; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-preview.pdf-preview { background: #171a1f; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-inline-preview.text-preview pre, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-preview-content pre { color: #e1e6ed; border-color: #39414d; background: #171a1f; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-empty { color: #b2bbc6; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-notice { color: #9bd5aa; border-color: #31563d; background: #183222; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-global-error, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-explorer .cloud-preview-error { color: #f4b8b4; border-color: #70403d; background: #3c2524; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-dialog, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-account-menu { color: #e8eaed; border-color: #39414d; background: #20242b; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-dialog > header, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-profile, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-section, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-account-summary { border-color: #39414d; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-dialog > header h2, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-section h3, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-account-summary strong, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-profile strong { color: #e8eaed; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-dialog .tmp-cloud-eyebrow, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-section > div:first-child p, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-profile small, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-account-summary small, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-note { color: #b2bbc6; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-account-menu > button { color: #e1e6ed; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-account-menu > button:hover, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-close:hover { color: #e8eaed; background: #2b323c; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-account-menu > button svg, .tmp-cloud-root[data-theme="dark"] .tmp-cloud-settings-close { color: #b2bbc6; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-choice-grid button { color: #dce2e9; border-color: #4a5260; background: #252a32; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-choice-grid button:hover { border-color: #6887af; background: #293341; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-choice-grid button.selected { color: #c5d9ff; border-color: #8ab4f8; background: #23344c; box-shadow: inset 0 0 0 1px #8ab4f8; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-choice-grid button small { color: #b2bbc6; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-segmented { border-color: #4a5260; background: #171a1f; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-segmented button { color: #c2cad4; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-segmented button.selected { color: #d8e5ff; background: #343d4a; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-switch strong { color: #e1e6ed; }
+.tmp-cloud-root[data-theme="dark"] .tmp-cloud-switch small { color: #b2bbc6; }
+.tmp-cloud-root[data-density="compact"] .tmp-cloud-explorer .cloud-inline-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 215px), 1fr)); gap: 8px; }
+.tmp-cloud-root[data-density="compact"] .tmp-cloud-explorer .cloud-inline-preview, .tmp-cloud-root[data-density="compact"] .tmp-cloud-explorer .cloud-inline-placeholder { height: 155px; }
+.tmp-cloud-root[data-density="compact"] .tmp-cloud-explorer .cloud-inline-preview.pdf-preview { height: 210px; }
+.tmp-cloud-root[data-density="compact"] .tmp-cloud-explorer .cloud-inline-card > header { min-height: 40px; }
+.tmp-cloud-root[data-density="compact"] .tmp-cloud-explorer .cloud-inline-card > footer { min-height: 36px; }
+
+@media (max-width: 560px) {
+  .tmp-cloud-settings-backdrop { align-items: end; padding: 8px; }
+  .tmp-cloud-settings-dialog { max-height: 94vh; border-radius: 18px; }
+  .tmp-cloud-settings-dialog > header { padding: 18px 17px 14px; }
+  .tmp-cloud-settings-profile, .tmp-cloud-settings-section { padding-right: 17px; padding-left: 17px; }
+  .tmp-cloud-settings-note { padding-right: 17px; padding-left: 17px; }
+  .tmp-cloud-choice-grid { gap: 6px; }
+  .tmp-cloud-choice-grid button { min-height: 93px; padding: 10px 8px; }
+  .tmp-cloud-choice-grid button small { font-size: 9px; }
+}
