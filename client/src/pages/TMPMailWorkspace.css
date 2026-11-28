@@ -1,5 +1,7 @@
 /* Full-page TMP Mail workspace only. The compact dashboard client retains its original styles. */
 .tm-mail-app-open {
+  width: 100%;
+  min-width: 0;
   color: #202124;
   background: #f6f8fc;
 }
@@ -40,10 +42,11 @@
   background: #fff;
 }
 .tm-mail-app-open .tm-mail-main {
-  width: min(1740px, 100%);
+  width: 100%;
+  max-width: none;
   min-height: calc(100vh - 120px);
-  margin: 0 auto;
-  padding: 16px clamp(10px, 2vw, 24px) 24px;
+  margin: 0;
+  padding: 12px clamp(8px, 1.4vw, 22px) 24px;
 }
 .tm-mail-app-open .tm-mail-footer {
   color: #70757a;
@@ -69,6 +72,8 @@
   --mg-accent-ink: #174ea6;
   --mg-danger: #b3261e;
   position: relative;
+  width: 100%;
+  box-sizing: border-box;
   min-height: calc(100vh - 120px);
   overflow: clip;
   color: var(--mg-text);

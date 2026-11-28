@@ -29,7 +29,7 @@ ALLOWED_ORIGINS = {
     for origin in os.environ.get("ALLOWED_ORIGIN", "https://thekingofcode7712.github.io").split(",")
     if origin.strip()
 }
-ALLOWED_ORIGINS.update({"https://tmpserver.com", "https://www.tmpserver.com", "https://mail.tmpserver.com"})
+ALLOWED_ORIGINS.update({"https://tmpserver.com", "https://www.tmpserver.com", "https://mail.tmpserver.com", "https://cloud.tmpserver.com"})
 PUBLIC_HOSTNAME = os.environ.get("PUBLIC_HOSTNAME", "140.238.70.11")
 STARTED = time.time()
 NETWORK_SAMPLE = None

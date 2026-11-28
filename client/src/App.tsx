@@ -5,11 +5,14 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import TMPCloud from "./pages/TMPCloud";
 import TMPMail from "./pages/TMPMail";
 
 function Router() {
-  if (typeof window !== "undefined" && window.location.hostname.toLowerCase() === "mail.tmpserver.com") {
-    return <TMPMail />;
+  if (typeof window !== "undefined") {
+    const hostname = window.location.hostname.toLowerCase();
+    if (hostname === "cloud.tmpserver.com") return <TMPCloud />;
+    if (hostname === "mail.tmpserver.com") return <TMPMail />;
   }
   return <Switch>
     <Route path="/" component={Home} />

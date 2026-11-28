@@ -3,6 +3,7 @@ import type { Session } from "@supabase/supabase-js";
 import { ArrowRight, LoaderCircle, LockKeyhole, LogOut, Mail, ShieldCheck } from "lucide-react";
 import MailPanel from "@/pages/MailPanel";
 import { isOwnerSession, ownerEmail, supabase, supabaseConfigured } from "@/lib/supabase";
+import "./TMPMailWorkspace.css";
 
 const hostApiUrl = (import.meta.env.VITE_HOST_API_URL as string | undefined)?.trim().replace(/\/$/, "") ?? "";
 
